@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="VintagestoryAPI">
+      <HintPath>/home/irish/VintageStory-API/VintagestoryAPI.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="VintagestoryLib">
+      <HintPath>/home/irish/VintageStory-API/VintagestoryLib.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="protobuf-net">
+    <HintPath>/home/irish/VintageStory-API/Lib/protobuf-net.dll</HintPath>
+    <Private>False</Private>
+  </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Lib.Harmony" Version="2.3.3">
+      <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    </PackageReference>
+  </ItemGroup>
+
+  <Target Name="Package" AfterTargets="PostBuildEvent">
+    <ItemGroup>
+      <ModFiles Include="$(TargetDir)$(TargetName).dll" />
+      <ModFiles Include="$(TargetDir)$(TargetName).pdb" />
+      <ModFiles Include="$(ProjectDir)modinfo.json" />
+      <ModFiles Include="$(ProjectDir)LICENSE" />
+      <ModFiles Include="$(ProjectDir)README.md" />
+    </ItemGroup>
+    <Copy SourceFiles="@(ModFiles)" DestinationFolder="$(ProjectDir)bin/$(Configuration)/mod/" />
+    <ZipDirectory SourceDirectory="$(ProjectDir)bin/$(Configuration)/mod/" DestinationFile="$(ProjectDir)bin/$(Configuration)/RecipeSelector_v2.0.0.zip" Overwrite="true" />
+  </Target>
+</Project>
