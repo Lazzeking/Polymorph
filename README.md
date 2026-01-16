@@ -7,7 +7,7 @@ It's very possible that previous compatibility patches did not make it with this
 
 AI was used extensively to update this mod accordingly due to my unfamiliarity with C#.
 
-*Under DArkHekRoMaNT's specified MIT Licensing I have taken their wonderful mod and brought it into a usable state with the current versions of Vintage Story. This fork will continue to be under an MIT Licensing.*
+*Under [DArkHekRoMaNT's](https://mods.vintagestory.at/show/user/614DA343A4AC0CE99F63) specified MIT Licensing I have taken their wonderful mod and brought it into a usable state with the current versions of Vintage Story. This fork will continue to be under an MIT Licensing.*
 
 *Upon request from DArkHekRoMaNT, if they should ever request it, I will happily remove this mod.*
 
