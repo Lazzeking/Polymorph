@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <AssemblyName>RecipeSelectorForkt2</AssemblyName>
+    <AssemblyName>Polymorph</AssemblyName>
     <TargetFramework>net10.0</TargetFramework>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
@@ -35,6 +35,9 @@
     <Content Include="modinfo.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <Content Include="assets/**/*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
   <PropertyGroup>
@@ -67,7 +70,11 @@
 
     <RemoveDir Directories="$(StageDir);$(SampleStage)" />
     <MakeDir Directories="$(StageDir);$(SampleStage)" />
-    <Copy SourceFiles="$(TargetDir)$(TargetName).dll;$(TargetDir)modinfo.json" DestinationFolder="$(StageDir)" />
+    <Copy SourceFiles="$(TargetDir)$(TargetName).dll;$(TargetDir)modinfo.json;$(MSBuildProjectDirectory)/LICENSE" DestinationFolder="$(StageDir)" />
+    <ItemGroup>
+      <ModAsset Include="$(TargetDir)assets/**/*.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(ModAsset)" DestinationFiles="@(ModAsset->'$(StageDir)assets/%(RecursiveDir)%(Filename)%(Extension)')" />
     <Copy SourceFiles="$(MSBuildProjectDirectory)/sample/doublerecipetest/modinfo.json" DestinationFolder="$(SampleStage)" />
     <ItemGroup>
       <SampleAsset Include="$(MSBuildProjectDirectory)/sample/doublerecipetest/assets/**/*.*" />

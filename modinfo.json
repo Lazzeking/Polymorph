@@ -1,10 +1,14 @@
 {
 	"type": "Code",
-	"name": "Recipe Selector (Forkt2)",
-	"modid": "recipeselectorforkt2",
-	"version": "2.1.0",
-	"description": "Allows you to choose a specific recipe if they conflict",
-	"authors": ["DArkHekRoMaNT (Original Author)", "Just_Irish (1.21.x update)", "Lazzeking (1.22.x update)"],
+	"name": "Polymorph",
+	"modid": "polymorph",
+	"version": "2.2.0",
+	"description": "Choose which recipe the survival crafting grid uses when several match.",
+	"authors": [
+		"Lazzeking",
+		"DArkHekRoMaNT (Recipe Selector, used as a basis)",
+		"Just_Irish (Recipe Selector Fork, used as a basis)"
+	],
 	"dependencies": {
 		"game": "1.22.0"
 	},
