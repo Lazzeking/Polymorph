@@ -1,12 +1,12 @@
 {
 	"type": "Code",
-	"name": "Recipe Selector (Fork)",
-	"modid": "recipeselectorfork",
-	"version": "2.0.0",
+	"name": "Recipe Selector (Forkt2)",
+	"modid": "recipeselectorforkt2",
+	"version": "2.1.0",
 	"description": "Allows you to choose a specific recipe if they conflict",
-	"authors": ["DArkHekRoMaNT (Original Author)", "Just_Irish (1.21.x update)"],
+	"authors": ["DArkHekRoMaNT (Original Author)", "Just_Irish (1.21.x update)", "Lazzeking (1.22.x update)"],
 	"dependencies": {
-		"game": "1.21.0"
+		"game": "1.22.0"
 	},
 	"side": "Universal"
 }

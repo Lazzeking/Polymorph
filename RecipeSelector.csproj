@@ -1,42 +1,88 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>RecipeSelectorForkt2</AssemblyName>
+    <TargetFramework>net10.0</TargetFramework>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <OutputPath>bin\$(Configuration)\Mods\mod</OutputPath>
+    <RootNamespace>RecipeSelector</RootNamespace>
+    <!-- Flatpak 1.22.7. Export VINTAGE_STORY to override this if the install moves. -->
+    <VINTAGE_STORY Condition="'$(VINTAGE_STORY)' == ''">/var/lib/flatpak/app/at.vintagestory.VintageStory/x86_64/stable/active/files/extra/vintagestory</VINTAGE_STORY>
   </PropertyGroup>
 
   <ItemGroup>
     <Reference Include="VintagestoryAPI">
-      <HintPath>/home/irish/VintageStory-API/VintagestoryAPI.dll</HintPath>
-      <Private>False</Private>
+      <HintPath>$(VINTAGE_STORY)/VintagestoryAPI.dll</HintPath>
+      <Private>false</Private>
     </Reference>
     <Reference Include="VintagestoryLib">
-      <HintPath>/home/irish/VintageStory-API/VintagestoryLib.dll</HintPath>
-      <Private>False</Private>
+      <HintPath>$(VINTAGE_STORY)/VintagestoryLib.dll</HintPath>
+      <Private>false</Private>
     </Reference>
     <Reference Include="protobuf-net">
-    <HintPath>/home/irish/VintageStory-API/Lib/protobuf-net.dll</HintPath>
-    <Private>False</Private>
-  </Reference>
+      <HintPath>$(VINTAGE_STORY)/Lib/protobuf-net.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="0Harmony">
+      <HintPath>$(VINTAGE_STORY)/Lib/0Harmony.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Lib.Harmony" Version="2.3.3">
-      <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
-    </PackageReference>
+    <Content Include="modinfo.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
-  <Target Name="Package" AfterTargets="PostBuildEvent">
+  <PropertyGroup>
+    <ModsFolder Condition="'$(ModsFolder)' == ''">/home/nicolo/.var/app/at.vintagestory.VintageStory/config/VintagestoryData/Mods</ModsFolder>
+  </PropertyGroup>
+
+  <Target Name="PackageMod" AfterTargets="Build" Condition="'$(DesignTimeBuild)' != 'true'">
+    <ReadLinesFromFile File="$(MSBuildProjectDirectory)/modinfo.json">
+      <Output TaskParameter="Lines" ItemName="ModInfoLine" />
+    </ReadLinesFromFile>
+    <ReadLinesFromFile File="$(MSBuildProjectDirectory)/sample/doublerecipetest/modinfo.json">
+      <Output TaskParameter="Lines" ItemName="SampleInfoLine" />
+    </ReadLinesFromFile>
+    <PropertyGroup>
+      <ModInfoText>@(ModInfoLine, ' ')</ModInfoText>
+      <ModInfoText>$(ModInfoText.Replace(',', ' '))</ModInfoText>
+      <SampleInfoText>@(SampleInfoLine, ' ')</SampleInfoText>
+      <SampleInfoText>$(SampleInfoText.Replace(',', ' '))</SampleInfoText>
+      <ModId>$([System.Text.RegularExpressions.Regex]::Match($(ModInfoText), '&quot;modid&quot;\s*:\s*&quot;([^&quot;]+)&quot;').Groups.get_Item(1).Value)</ModId>
+      <ModVersion>$([System.Text.RegularExpressions.Regex]::Match($(ModInfoText), '&quot;version&quot;\s*:\s*&quot;([^&quot;]+)&quot;').Groups.get_Item(1).Value)</ModVersion>
+      <SampleId>$([System.Text.RegularExpressions.Regex]::Match($(SampleInfoText), '&quot;modid&quot;\s*:\s*&quot;([^&quot;]+)&quot;').Groups.get_Item(1).Value)</SampleId>
+      <SampleVersion>$([System.Text.RegularExpressions.Regex]::Match($(SampleInfoText), '&quot;version&quot;\s*:\s*&quot;([^&quot;]+)&quot;').Groups.get_Item(1).Value)</SampleVersion>
+      <StageDir>$(MSBuildProjectDirectory)/bin/$(Configuration)/stage/</StageDir>
+      <SampleStage>$(MSBuildProjectDirectory)/bin/$(Configuration)/sample-stage/</SampleStage>
+      <ModZip>$(MSBuildProjectDirectory)/bin/$(Configuration)/$(ModId)_$(ModVersion).zip</ModZip>
+      <SampleZip>$(MSBuildProjectDirectory)/bin/$(Configuration)/$(SampleId)_$(SampleVersion).zip</SampleZip>
+    </PropertyGroup>
+    <Error Condition="'$(ModId)' == '' Or '$(ModVersion)' == ''" Text="Could not read modid and version from modinfo.json." />
+    <Error Condition="'$(SampleId)' == '' Or '$(SampleVersion)' == ''" Text="Could not read modid and version from the double-recipe test mod." />
+
+    <RemoveDir Directories="$(StageDir);$(SampleStage)" />
+    <MakeDir Directories="$(StageDir);$(SampleStage)" />
+    <Copy SourceFiles="$(TargetDir)$(TargetName).dll;$(TargetDir)modinfo.json" DestinationFolder="$(StageDir)" />
+    <Copy SourceFiles="$(MSBuildProjectDirectory)/sample/doublerecipetest/modinfo.json" DestinationFolder="$(SampleStage)" />
     <ItemGroup>
-      <ModFiles Include="$(TargetDir)$(TargetName).dll" />
-      <ModFiles Include="$(TargetDir)$(TargetName).pdb" />
-      <ModFiles Include="$(ProjectDir)modinfo.json" />
-      <ModFiles Include="$(ProjectDir)LICENSE" />
-      <ModFiles Include="$(ProjectDir)README.md" />
+      <SampleAsset Include="$(MSBuildProjectDirectory)/sample/doublerecipetest/assets/**/*.*" />
     </ItemGroup>
-    <Copy SourceFiles="@(ModFiles)" DestinationFolder="$(ProjectDir)bin/$(Configuration)/mod/" />
-    <ZipDirectory SourceDirectory="$(ProjectDir)bin/$(Configuration)/mod/" DestinationFile="$(ProjectDir)bin/$(Configuration)/RecipeSelector_v2.0.0.zip" Overwrite="true" />
+    <Copy SourceFiles="@(SampleAsset)" DestinationFiles="@(SampleAsset->'$(SampleStage)assets/%(RecursiveDir)%(Filename)%(Extension)')" />
+    <ZipDirectory SourceDirectory="$(StageDir)" DestinationFile="$(ModZip)" Overwrite="true" />
+    <ZipDirectory SourceDirectory="$(SampleStage)" DestinationFile="$(SampleZip)" Overwrite="true" />
+
+    <ItemGroup>
+      <PreviousZip Include="$(ModsFolder)/$(ModId)_*.zip" />
+      <PreviousZip Include="$(ModsFolder)/$(SampleId)_*.zip" />
+    </ItemGroup>
+    <Delete Files="@(PreviousZip)" />
+    <Copy SourceFiles="$(ModZip);$(SampleZip)" DestinationFolder="$(ModsFolder)" />
+    <Copy SourceFiles="$(ModZip)" DestinationFolder="$(MSBuildProjectDirectory)/Release" Condition="'$(Configuration)' == 'Release'" />
+    <Message Importance="high" Text="Installed $(ModId)_$(ModVersion).zip and $(SampleId)_$(SampleVersion).zip into $(ModsFolder)" />
   </Target>
 </Project>

@@ -1,11 +1,10 @@
 # Updated Readme
 
-### Recipe Selector (Fork))
+### Recipe Selector (Forkt2)
 
 Allows you to cycle between conflicting recipes within the crafting grid if they share the same recipe format by clicking on the "Next" button just below the crafting grid squares.
-It's very possible that previous compatibility patches did not make it with this version, so please report and request if you see a need.
 
-AI was used extensively to update this mod accordingly due to my unfamiliarity with C#.
+This build targets Vintage Story 1.22.x. It continues the 1.21 update by Just_Irish of DArkHekRoMaNT's original mod.
 
 *Under [DArkHekRoMaNT's](https://mods.vintagestory.at/show/user/614DA343A4AC0CE99F63) specified MIT Licensing I have taken their wonderful mod and brought it into a usable state with the current versions of Vintage Story. This fork will continue to be under an MIT Licensing.*
 

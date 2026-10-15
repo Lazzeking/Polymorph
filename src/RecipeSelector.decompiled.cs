@@ -1,14 +1,10 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Reflection;
 using System.Reflection.Emit;
-using System.Runtime.CompilerServices;
-using System.Runtime.Versioning;
 using HarmonyLib;
-using Microsoft.CodeAnalysis;
 using ProtoBuf;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
@@ -30,6 +26,7 @@ namespace RecipeSelector
 			MethodInfo composeMethod = AccessTools.Method(typeof(GuiComposer), "Compose", (Type[])null, (Type[])null);
 			MethodInfo injectMethod = AccessTools.Method(typeof(Patch_GuiDialogInventory_ComposeSurvivalInvDialog), "Inject", (Type[])null, (Type[])null);
 			CodeInstruction[] codes = instructions.ToArray();
+			bool injected = false;
 			for (int i = 0; i < codes.Length - 2; i++)
 			{
 				if (CodeInstructionExtensions.Calls(codes[i + 1], composeMethod))
@@ -37,11 +34,16 @@ namespace RecipeSelector
 					yield return CodeInstruction.LoadArgument(0, false);
 					yield return CodeInstruction.LoadField(typeof(GuiDialogInventory), "craftingInv", false);
 					yield return new CodeInstruction(OpCodes.Call, (object)injectMethod);
+					injected = true;
 				}
 				yield return codes[i];
 			}
 			yield return codes[^2];
 			yield return codes[^1];
+			if (!injected)
+			{
+				throw new InvalidOperationException("Recipe Selector could not find GuiComposer.Compose in GuiDialogInventory.ComposeSurvivalInvDialog.");
+			}
 		}
 
 		private static GuiComposer Inject(GuiComposer composer, IInventory inv)
@@ -77,48 +79,86 @@ namespace RecipeSelector
 
 		public static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions, ILGenerator generator)
 		{
-			MethodInfo foundMatchMethod = AccessTools.Method(typeof(InventoryCraftingGrid), "FoundMatch", (Type[])null, (Type[])null);
+			// 1.22 FindMatchingRecipe returns on the first shaped or shapeless hit.
+			// Keep scanning, remember every match, then call FoundMatch once with the chosen recipe.
+			MethodInfo foundMatchMethod = AccessTools.Method(typeof(InventoryCraftingGrid), "FoundMatch");
+			MethodInfo listAdd = AccessTools.Method(typeof(List<GridRecipe>), "Add");
+			MethodInfo listCount = AccessTools.PropertyGetter(typeof(List<GridRecipe>), "Count");
+			MethodInfo injectMethod = AccessTools.Method(typeof(Patch_InventoryCraftingGrid_FindMatchingRecipe), "Inject");
+			FieldInfo apiField = AccessTools.Field(typeof(InventoryCraftingGrid), "Api");
+			MethodInfo getPlayer = AccessTools.Method(typeof(InventoryCraftingGrid), "get_Player");
 			int lastMatchingRecipeIndex = generator.DeclareLocal(typeof(GridRecipe)).LocalIndex;
-			yield return CodeInstruction.LoadArgument(0, false);
-			yield return CodeInstruction.LoadField(typeof(InventoryCraftingGrid), "MatchingRecipe", false);
-			yield return CodeInstruction.StoreLocal(lastMatchingRecipeIndex);
 			int recipeListIndex = generator.DeclareLocal(typeof(List<GridRecipe>)).LocalIndex;
-			yield return new CodeInstruction(OpCodes.Newobj, (object)typeof(List<GridRecipe>).GetConstructor(Type.EmptyTypes));
+			yield return CodeInstruction.LoadArgument(0);
+			yield return CodeInstruction.LoadField(typeof(InventoryCraftingGrid), "MatchingRecipe");
+			yield return CodeInstruction.StoreLocal(lastMatchingRecipeIndex);
+			yield return new CodeInstruction(OpCodes.Newobj, typeof(List<GridRecipe>).GetConstructor(Type.EmptyTypes));
 			yield return CodeInstruction.StoreLocal(recipeListIndex);
 			CodeInstruction[] codes = instructions.ToArray();
-			for (int i = 0; i < codes.Length - 3; i++)
+			int replaced = 0;
+			for (int i = 0; i < codes.Length; i++)
 			{
-				if (CodeInstructionExtensions.Calls(codes[i + 2], foundMatchMethod))
+				if (IsFoundMatchSite(codes, i, foundMatchMethod))
 				{
-					yield return CodeInstruction.LoadLocal(recipeListIndex, false);
+					CodeInstruction addList = CodeInstruction.LoadLocal(recipeListIndex);
+					MoveLabels(codes[i], addList);
+					MoveLabels(codes[i + 1], addList);
+					MoveLabels(codes[i + 2], addList);
+					MoveLabels(codes[i + 3], addList);
+					yield return addList;
 					yield return codes[i + 1];
-					yield return CodeInstruction.Call(typeof(List<GridRecipe>), "Add", (Type[])null, (Type[])null);
+					yield return new CodeInstruction(OpCodes.Callvirt, listAdd);
+					replaced++;
 					i += 3;
+					continue;
 				}
-				else
+				if (codes[i].opcode == OpCodes.Ret)
 				{
-					yield return codes[i];
+					Label skip = generator.DefineLabel();
+					yield return CodeInstruction.LoadLocal(recipeListIndex);
+					yield return new CodeInstruction(OpCodes.Callvirt, listCount);
+					yield return new CodeInstruction(OpCodes.Brfalse, skip);
+					yield return CodeInstruction.LoadArgument(0);
+					yield return CodeInstruction.LoadLocal(lastMatchingRecipeIndex);
+					yield return CodeInstruction.LoadLocal(recipeListIndex);
+					yield return CodeInstruction.LoadArgument(0);
+					yield return new CodeInstruction(OpCodes.Ldfld, apiField);
+					yield return CodeInstruction.LoadArgument(0);
+					yield return new CodeInstruction(OpCodes.Call, getPlayer);
+					yield return new CodeInstruction(OpCodes.Call, injectMethod);
+					yield return new CodeInstruction(OpCodes.Call, foundMatchMethod);
+					codes[i].labels.Add(skip);
 				}
+				yield return codes[i];
 			}
-			Label endLabel = generator.DefineLabel();
-			yield return CodeInstruction.LoadLocal(recipeListIndex, false);
-			yield return CodeInstruction.Call(typeof(List<GridRecipe>), "get_Count", (Type[])null, (Type[])null);
-			yield return new CodeInstruction(OpCodes.Ldc_I4_0, (object)null);
-			yield return new CodeInstruction(OpCodes.Cgt, (object)null);
-			yield return new CodeInstruction(OpCodes.Brfalse_S, (object)endLabel);
-			yield return CodeInstruction.LoadArgument(0, false);
-			yield return CodeInstruction.LoadLocal(lastMatchingRecipeIndex, false);
-			yield return CodeInstruction.LoadLocal(recipeListIndex, false);
-			yield return CodeInstruction.LoadArgument(0, false);
-			yield return CodeInstruction.LoadField(typeof(InventoryCraftingGrid), "Api", false);
-			yield return CodeInstruction.LoadArgument(0, false);
-			yield return CodeInstruction.Call(typeof(InventoryCraftingGrid), "get_Player", (Type[])null, (Type[])null);
-			yield return CodeInstruction.Call(typeof(Patch_InventoryCraftingGrid_FindMatchingRecipe), "Inject", (Type[])null, (Type[])null);
-			yield return new CodeInstruction(OpCodes.Call, (object)foundMatchMethod);
-			codes[^3].labels.Add(endLabel);
-			yield return codes[^3];
-			yield return codes[^2];
-			yield return codes[^1];
+			if (replaced != 2)
+			{
+				throw new InvalidOperationException("Recipe Selector expected to rewrite 2 FoundMatch calls in InventoryCraftingGrid.FindMatchingRecipe, but rewrote " + replaced + ".");
+			}
+		}
+
+		private static bool IsFoundMatchSite(CodeInstruction[] codes, int index, MethodInfo foundMatchMethod)
+		{
+			if (index + 3 >= codes.Length || !CodeInstructionExtensions.Calls(codes[index + 2], foundMatchMethod))
+			{
+				return false;
+			}
+			OpCode leave = codes[index + 3].opcode;
+			return leave == OpCodes.Leave || leave == OpCodes.Leave_S;
+		}
+
+		private static void MoveLabels(CodeInstruction from, CodeInstruction to)
+		{
+			if (from.labels.Count > 0)
+			{
+				to.labels.AddRange(from.labels);
+				from.labels.Clear();
+			}
+			if (from.blocks.Count > 0)
+			{
+				to.blocks.AddRange(from.blocks);
+				from.blocks.Clear();
+			}
 		}
 
 		private static GridRecipe Inject(GridRecipe currentMatchingRecipe, List<GridRecipe> recipes, ICoreAPI api, IPlayer player)
@@ -154,7 +194,7 @@ namespace RecipeSelector
 			return recipes[0];
 			bool HasRecipe(GridRecipe recipe)
 			{
-				return recipes.Any((GridRecipe x) => x.Output.ResolvedItemstack.Equals(api.World, recipe.Output.ResolvedItemstack, Array.Empty<string>()));
+				return recipes.Any((GridRecipe x) => x.Output.ResolvedItemStack.Equals(api.World, recipe.Output.ResolvedItemStack, Array.Empty<string>()));
 			}
 		}
 	}
@@ -171,12 +211,12 @@ namespace RecipeSelector
 
 		public override void StartClientSide(ICoreClientAPI api)
 		{
-			_clientChannel = api.Network.RegisterChannel("recipeselector").RegisterMessageType<NextRecipePacket>();
+			_clientChannel = api.Network.RegisterChannel("recipeselectorforkt2").RegisterMessageType<NextRecipePacket>();
 		}
 
 		public override void StartServerSide(ICoreServerAPI api)
 		{
-			api.Network.RegisterChannel("recipeselector").RegisterMessageType<NextRecipePacket>().SetMessageHandler<NextRecipePacket>((NetworkClientMessageHandler<NextRecipePacket>)OnNextRecipePacketReceived);
+			api.Network.RegisterChannel("recipeselectorforkt2").RegisterMessageType<NextRecipePacket>().SetMessageHandler<NextRecipePacket>((NetworkClientMessageHandler<NextRecipePacket>)OnNextRecipePacketReceived);
 		}
 
 		public void OnNextClicked(IClientPlayer player)
