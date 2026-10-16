@@ -4,9 +4,9 @@ using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 using Vintagestory.API.Config;
 
-namespace RecipeSelector;
+namespace Polymorph;
 
-public sealed class RecipeChoiceDialog : GuiDialog
+public sealed class PolymorphChoiceDialog : GuiDialog
 {
     private const double Padding = 6;
     private const int MaxColumns = 8;
@@ -19,7 +19,7 @@ public sealed class RecipeChoiceDialog : GuiDialog
     private double _buttonWidth;
     private double _buttonHeight;
 
-    public RecipeChoiceDialog(ICoreClientAPI capi, Action<string> onSelected) : base(capi)
+    public PolymorphChoiceDialog(ICoreClientAPI capi, Action<string> onSelected) : base(capi)
     {
         _onSelected = onSelected;
     }
@@ -90,7 +90,7 @@ public sealed class RecipeChoiceDialog : GuiDialog
             return false;
         }
 
-        string key = RecipeSelectorMod.RecipeKey(_recipes[index]);
+        string key = PolymorphMod.RecipeKey(_recipes[index]);
         TryClose();
         _onSelected(key);
         return true;
@@ -135,7 +135,7 @@ public sealed class RecipeChoiceDialog : GuiDialog
 
         float scale = RuntimeEnv.GUIScale;
         double buttonHeight = outerHeight / scale;
-        double slotSize = buttonHeight / RecipeChoiceButton.SizeRatio;
+        double slotSize = buttonHeight / PolymorphChoiceButton.SizeRatio;
         double slotsX = renderX / scale + outerWidth / scale + 4;
         double slotsY = renderY / scale - (slotSize - buttonHeight) / 2;
 
@@ -169,7 +169,7 @@ public sealed class RecipeChoiceDialog : GuiDialog
         }
 
         SingleComposer?.Dispose();
-        SingleComposer = capi.Gui.CreateCompo("recipechoices", dialog)
+        SingleComposer = capi.Gui.CreateCompo("polymorphchoices", dialog)
             .AddShadedDialogBG(ElementBounds.Fill, false, 2, 0.95f)
             .AddItemSlotGrid(_inventory, _ => { }, columns, slots, "choices")
             .Compose();
@@ -177,7 +177,7 @@ public sealed class RecipeChoiceDialog : GuiDialog
         int active = 0;
         for (int i = 0; i < _recipes.Count; i++)
         {
-            if (RecipeSelectorMod.RecipeKey(_recipes[i]) == activeKey)
+            if (PolymorphMod.RecipeKey(_recipes[i]) == activeKey)
             {
                 active = i;
                 break;

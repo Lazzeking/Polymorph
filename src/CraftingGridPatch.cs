@@ -1,7 +1,7 @@
 using HarmonyLib;
 using Vintagestory.Common;
 
-namespace RecipeSelector;
+namespace Polymorph;
 
 [HarmonyPatch(typeof(InventoryCraftingGrid), "FindMatchingRecipe")]
 public static class CraftingGridPatch
@@ -10,7 +10,7 @@ public static class CraftingGridPatch
     {
         try
         {
-            return !RecipeSelectorMod.TryResolve(__instance);
+            return !PolymorphMod.TryResolve(__instance);
         }
         catch (System.Exception exception)
         {

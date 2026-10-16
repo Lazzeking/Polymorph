@@ -7,7 +7,9 @@
     <ImplicitUsings>disable</ImplicitUsings>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <OutputPath>bin\$(Configuration)\Mods\mod</OutputPath>
-    <RootNamespace>RecipeSelector</RootNamespace>
+    <RootNamespace>Polymorph</RootNamespace>
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
     <!-- Flatpak 1.22.7. Export VINTAGE_STORY to override this if the install moves. -->
     <VINTAGE_STORY Condition="'$(VINTAGE_STORY)' == ''">/var/lib/flatpak/app/at.vintagestory.VintageStory/x86_64/stable/active/files/extra/vintagestory</VINTAGE_STORY>
   </PropertyGroup>

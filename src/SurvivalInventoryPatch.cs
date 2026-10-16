@@ -9,7 +9,7 @@ using Vintagestory.API.MathTools;
 using Vintagestory.Client.NoObf;
 using Vintagestory.Common;
 
-namespace RecipeSelector;
+namespace Polymorph;
 
 [HarmonyPatch(typeof(GuiDialogInventory), "ComposeSurvivalInvDialog")]
 public static class SurvivalInventoryPatch
@@ -50,7 +50,7 @@ public static class SurvivalInventoryPatch
             return composer;
         }
 
-        RecipeSelectorMod? mod = capi.ModLoader.GetModSystem<RecipeSelectorMod>();
+        PolymorphMod? mod = capi.ModLoader.GetModSystem<PolymorphMod>();
         if (mod == null)
         {
             return composer;
@@ -58,13 +58,13 @@ public static class SurvivalInventoryPatch
 
         ElementBounds slot = output.Bounds;
         double slotSize = slot.fixedHeight > 0 ? slot.fixedHeight : 32;
-        double size = slotSize * RecipeChoiceButton.SizeRatio;
+        double size = slotSize * PolymorphChoiceButton.SizeRatio;
         ElementBounds bounds = ElementBounds.FixedSize(size, size);
         bounds.Alignment = slot.Alignment;
         bounds.ParentBounds = slot.ParentBounds;
         bounds.fixedX = slot.fixedX + slot.fixedWidth + 4;
         bounds.fixedY = slot.fixedY + (slotSize - size) / 2;
-        composer.AddInteractiveElement(new RecipeChoiceButton(capi, bounds, mod), "recipeChoices");
+        composer.AddInteractiveElement(new PolymorphChoiceButton(capi, bounds, mod), "polymorphChoices");
         return composer;
     }
 }
@@ -76,7 +76,7 @@ public static class SurvivalInventoryClosePatch
     {
         if (__instance.capiAccess() is ICoreClientAPI capi)
         {
-            capi.ModLoader.GetModSystem<RecipeSelectorMod>()?.CloseChoices();
+            capi.ModLoader.GetModSystem<PolymorphMod>()?.CloseChoices();
         }
     }
 }
@@ -94,13 +94,13 @@ internal static class DialogAccess
     }
 }
 
-public sealed class RecipeChoiceButton : GuiElementTextButton
+public sealed class PolymorphChoiceButton : GuiElementTextButton
 {
     public const double SizeRatio = 0.75;
 
-    private readonly RecipeSelectorMod _mod;
+    private readonly PolymorphMod _mod;
 
-    public RecipeChoiceButton(ICoreClientAPI capi, ElementBounds bounds, RecipeSelectorMod mod)
+    public PolymorphChoiceButton(ICoreClientAPI capi, ElementBounds bounds, PolymorphMod mod)
         : base(capi, "", CairoFont.WhiteSmallText(), CairoFont.WhiteSmallText(), () => true, bounds, EnumButtonStyle.Normal)
     {
         _mod = mod;

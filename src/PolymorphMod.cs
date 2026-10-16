@@ -11,9 +11,9 @@ using Vintagestory.API.Common;
 using Vintagestory.API.Server;
 using Vintagestory.Common;
 
-namespace RecipeSelector;
+namespace Polymorph;
 
-public class RecipeSelectorMod : ModSystem
+public class PolymorphMod : ModSystem
 {
     public const string IconPath = "textures/gui/cycle.svg";
     public const string ConfigFile = "polymorph.json";
@@ -29,7 +29,7 @@ public class RecipeSelectorMod : ModSystem
     private Action? _saveGameLoaded;
     private IClientNetworkChannel? _clientChannel;
     private IServerNetworkChannel? _serverChannel;
-    private RecipeChoiceDialog? _choiceDialog;
+    private PolymorphChoiceDialog? _choiceDialog;
     private List<GridRecipe> _matches = new();
     private string _arrangement = "";
     private string _activeKey = "";
@@ -46,7 +46,7 @@ public class RecipeSelectorMod : ModSystem
         }
 
         _harmony = new Harmony("polymorph");
-        _harmony.PatchAll(typeof(RecipeSelectorMod).Assembly);
+        _harmony.PatchAll(typeof(PolymorphMod).Assembly);
     }
 
     public override void StartClientSide(ICoreClientAPI api)
@@ -57,7 +57,7 @@ public class RecipeSelectorMod : ModSystem
             .RegisterMessageType<SelectRecipePacket>()
             .RegisterMessageType<DenyListPacket>()
             .SetMessageHandler<DenyListPacket>(OnDenyList);
-        _choiceDialog = new RecipeChoiceDialog(api, SelectChoice);
+        _choiceDialog = new PolymorphChoiceDialog(api, SelectChoice);
         Icon = api.Gui.LoadSvgWithPadding(new AssetLocation(Mod.Info.ModID, IconPath), 64, 64, 4, null);
         if (Icon == null)
         {
@@ -125,7 +125,7 @@ public class RecipeSelectorMod : ModSystem
 
     public static bool TryResolve(InventoryCraftingGrid grid)
     {
-        RecipeSelectorMod? mod = grid.Api.ModLoader.GetModSystem<RecipeSelectorMod>();
+        PolymorphMod? mod = grid.Api.ModLoader.GetModSystem<PolymorphMod>();
         if (mod == null)
         {
             return false;
@@ -281,7 +281,7 @@ public class RecipeSelectorMod : ModSystem
         CraftingGridAccess.FindMatchingRecipe(grid);
     }
 
-    private static List<GridRecipe> FindMatches(RecipeSelectorMod mod, InventoryCraftingGrid grid, ItemSlot[] slots, int gridSize, IPlayer? player)
+    private static List<GridRecipe> FindMatches(PolymorphMod mod, InventoryCraftingGrid grid, ItemSlot[] slots, int gridSize, IPlayer? player)
     {
         var candidates = new List<GridRecipe>();
         var seen = new HashSet<GridRecipe>();
@@ -316,7 +316,7 @@ public class RecipeSelectorMod : ModSystem
         return matches;
     }
 
-    private static void AppendMatches(List<GridRecipe> matches, List<GridRecipe> candidates, RecipeSelectorMod mod, IPlayer? player, InventoryCraftingGrid grid, ItemSlot[] slots, int gridSize, bool shapeless)
+    private static void AppendMatches(List<GridRecipe> matches, List<GridRecipe> candidates, PolymorphMod mod, IPlayer? player, InventoryCraftingGrid grid, ItemSlot[] slots, int gridSize, bool shapeless)
     {
         foreach (GridRecipe recipe in candidates)
         {
@@ -334,20 +334,20 @@ public class RecipeSelectorMod : ModSystem
 
     private List<string> LoadDenyList(ICoreServerAPI api)
     {
-        RecipeSelectorConfig? config;
+        PolymorphConfig? config;
         try
         {
-            config = api.LoadModConfig<RecipeSelectorConfig>(ConfigFile);
+            config = api.LoadModConfig<PolymorphConfig>(ConfigFile);
         }
         catch (Exception exception)
         {
             api.Logger.Error("Could not read the Polymorph denylist: " + exception.Message);
-            config = new RecipeSelectorConfig();
+            config = new PolymorphConfig();
         }
 
         if (config == null)
         {
-            config = new RecipeSelectorConfig();
+            config = new PolymorphConfig();
             api.StoreModConfig(config, ConfigFile);
         }
 
@@ -444,10 +444,10 @@ public class RecipeSelectorMod : ModSystem
 
     private TextCommandResult CheckDenySyntax(ICoreServerAPI api)
     {
-        RecipeSelectorConfig? config;
+        PolymorphConfig? config;
         try
         {
-            config = api.LoadModConfig<RecipeSelectorConfig>(ConfigFile);
+            config = api.LoadModConfig<PolymorphConfig>(ConfigFile);
         }
         catch (Exception exception)
         {
@@ -981,7 +981,7 @@ public class DenyListPacket
     public string[] Names { get; set; } = Array.Empty<string>();
 }
 
-public class RecipeSelectorConfig
+public class PolymorphConfig
 {
     public string[] Deny = Array.Empty<string>();
 }
