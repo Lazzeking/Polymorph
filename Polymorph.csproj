@@ -72,7 +72,7 @@
 
     <RemoveDir Directories="$(StageDir);$(SampleStage)" />
     <MakeDir Directories="$(StageDir);$(SampleStage)" />
-    <Copy SourceFiles="$(TargetDir)$(TargetName).dll;$(TargetDir)modinfo.json;$(MSBuildProjectDirectory)/LICENSE" DestinationFolder="$(StageDir)" />
+    <Copy SourceFiles="$(TargetDir)$(TargetName).dll;$(TargetDir)modinfo.json;$(MSBuildProjectDirectory)/LICENSE;$(MSBuildProjectDirectory)/modicon.png" DestinationFolder="$(StageDir)" />
     <ItemGroup>
       <ModAsset Include="$(TargetDir)assets/**/*.*" />
     </ItemGroup>

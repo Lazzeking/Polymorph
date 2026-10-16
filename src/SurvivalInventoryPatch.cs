@@ -14,6 +14,32 @@ namespace Polymorph;
 [HarmonyPatch(typeof(GuiDialogInventory), "ComposeSurvivalInvDialog")]
 public static class SurvivalInventoryPatch
 {
+    public static void PatchOverhaulLib(Harmony harmony, ICoreAPI api)
+    {
+        if (!api.ModLoader.IsModEnabled("overhaullib"))
+        {
+            return;
+        }
+
+        System.Type? type = AccessTools.TypeByName("CombatOverhaul.Integration.GuiDialogPatches");
+        MethodInfo? method = type == null ? null : AccessTools.DeclaredMethod(type, "GuiDialogInventory_ComposeSurvivalInvDialog");
+        if (method == null)
+        {
+            api.Logger.Warning("Polymorph found Overhaul Lib but could not add the choice button to its inventory window.");
+            return;
+        }
+
+        try
+        {
+            harmony.Patch(method, transpiler: new HarmonyMethod(typeof(SurvivalInventoryPatch), nameof(Transpiler)));
+            api.Logger.Notification("Polymorph added the choice button to the Overhaul Lib inventory window.");
+        }
+        catch (System.Exception exception)
+        {
+            api.Logger.Warning("Polymorph could not add the choice button to the Overhaul Lib inventory window: " + exception.Message);
+        }
+    }
+
     public static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
     {
         MethodInfo compose = AccessTools.Method(typeof(GuiComposer), "Compose", new[] { typeof(bool) });

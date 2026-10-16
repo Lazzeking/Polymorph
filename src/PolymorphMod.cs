@@ -58,6 +58,10 @@ public class PolymorphMod : ModSystem
             .RegisterMessageType<DenyListPacket>()
             .SetMessageHandler<DenyListPacket>(OnDenyList);
         _choiceDialog = new PolymorphChoiceDialog(api, SelectChoice);
+        if (_harmony != null)
+        {
+            SurvivalInventoryPatch.PatchOverhaulLib(_harmony, api);
+        }
         Icon = api.Gui.LoadSvgWithPadding(new AssetLocation(Mod.Info.ModID, IconPath), 64, 64, 4, null);
         if (Icon == null)
         {
