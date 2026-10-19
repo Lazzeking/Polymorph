@@ -14,7 +14,7 @@ public static class CraftingGridPatch
         }
         catch (System.Exception exception)
         {
-            __instance.Api.Logger.Error("Polymorph could not resolve the crafting grid: " + exception);
+            __instance.Api.Logger.Error("Polymorph could not resolve the crafting grid: {0}", exception);
             return true;
         }
     }

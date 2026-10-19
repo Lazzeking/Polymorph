@@ -35,10 +35,6 @@
       <HintPath>$(VINTAGE_STORY)/Lib/Newtonsoft.Json.dll</HintPath>
       <Private>false</Private>
     </Reference>
-    <Reference Include="Tavis.JsonPatch">
-      <HintPath>$(VINTAGE_STORY)/Lib/Tavis.JsonPatch.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
     <Reference Include="protobuf-net">
       <HintPath>$(VINTAGE_STORY)/Lib/protobuf-net.dll</HintPath>
       <Private>false</Private>

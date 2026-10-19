@@ -78,7 +78,7 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
         }
         catch (Exception exception)
         {
-            api.Logger.Warning("Polymorph could not apply its " + category + " patches, so " + fallback + ": " + exception.Message);
+            api.Logger.Warning("Polymorph could not apply its {0} patches, so {1}: {2}", category, fallback, exception.Message);
             foreach (MethodBase original in harmony.GetPatchedMethods().ToList())
             {
                 Patches? info = Harmony.GetPatchInfo(original);
@@ -444,7 +444,7 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
         }
         catch (Exception exception)
         {
-            api.Logger.Error("Could not read the Polymorph denylist: " + exception.Message);
+            api.Logger.Error("Could not read the Polymorph denylist: {0}", exception.Message);
             config = new PolymorphConfig();
         }
 
@@ -457,7 +457,7 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
         (List<string> accepted, List<string> invalid) = ScanDenyEntries(api, config.Deny);
         foreach (string entry in invalid)
         {
-            api.Logger.Warning("Polymorph denylist entry does not match a grid recipe or quern result: " + entry);
+            api.Logger.Warning("Polymorph denylist entry does not match a grid recipe or quern result: {0}", entry);
         }
 
         ReplaceDenied(accepted.ToArray());

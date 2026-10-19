@@ -37,7 +37,7 @@ public static class SurvivalInventoryPatch
         }
         catch (System.Exception exception)
         {
-            api.Logger.Warning("Polymorph could not add the choice button to the Overhaul Lib inventory window: " + exception.Message);
+            api.Logger.Warning("Polymorph could not add the choice button to the Overhaul Lib inventory window: {0}", exception.Message);
         }
     }
 

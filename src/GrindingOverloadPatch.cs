@@ -6,7 +6,6 @@ using HarmonyLib;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using ProtoBuf;
-using Tavis;
 using Vintagestory.API.Common;
 using Vintagestory.API.Datastructures;
 using Vintagestory.API.Util;
@@ -26,8 +25,6 @@ public static class GrindingOverloads
     private const string GrindingPropsByType = "grindingPropsByType";
 
     private static readonly ConditionalWeakTable<ICoreAPI, List<GrindingOverload>> ByApi = new();
-
-    [ThreadStatic] private static PendingPatch? _pending;
 
     public static List<GrindingOverload> For(ICoreAPI api)
     {
@@ -81,31 +78,39 @@ public static class GrindingOverloads
         }
     }
 
-    internal static void Begin(ICoreAPI api, EnumJsonPatchOp op, AssetLocation? file, AssetLocation? source)
+    public static bool IsTypeFile(AssetLocation? file)
     {
-        _pending = file != null && (file.Path.StartsWith("itemtypes/", StringComparison.OrdinalIgnoreCase) || file.Path.StartsWith("blocktypes/", StringComparison.OrdinalIgnoreCase))
-            ? new PendingPatch(api, op, file.Domain, source?.ToString() ?? "")
+        return file != null && (file.Path.StartsWith("itemtypes/", StringComparison.OrdinalIgnoreCase) || file.Path.StartsWith("blocktypes/", StringComparison.OrdinalIgnoreCase));
+    }
+
+    public static JToken? Parse(IAsset? asset)
+    {
+        try
+        {
+            return asset == null ? null : JToken.Parse(asset.ToText());
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    // The grinding results of an item or block file just before a patch changes it.
+    public static Capture? Before(ICoreAPI api, EnumJsonPatchOp op, AssetLocation file, AssetLocation? source, JToken? document)
+    {
+        return IsTypeFile(file) && document is JObject root
+            ? new Capture(api, op, file.Domain, source?.ToString() ?? "", Snapshot(root))
             : null;
     }
 
-    internal static void End()
+    public static void After(Capture pending, JToken? document)
     {
-        _pending = null;
-    }
-
-    internal static Dictionary<string, string>? Before(object? document)
-    {
-        return _pending != null && document is JObject root ? Snapshot(root) : null;
-    }
-
-    internal static void After(object? document, Dictionary<string, string> before)
-    {
-        PendingPatch? pending = _pending;
-        if (pending == null || document is not JObject root || root.GetValue("code", StringComparison.OrdinalIgnoreCase)?.Value<string>() is not string code)
+        if (document is not JObject root || root.GetValue("code", StringComparison.OrdinalIgnoreCase)?.Value<string>() is not string code)
         {
             return;
         }
 
+        Dictionary<string, string> before = pending.Before;
         Dictionary<string, string> after = Snapshot(root);
         List<GrindingOverload> overloads = For(pending.Api);
         foreach ((string pattern, string old) in before)
@@ -129,9 +134,14 @@ public static class GrindingOverloads
             }
 
             overloads.Add(new GrindingOverload { Domain = pending.Domain, Code = code, Pattern = pattern, Stack = old, Source = pending.Source });
-            pending.Api.Logger.Notification(
-                "Polymorph kept the quern result " + old + " of " + pending.Domain + ":" + code
-                + (pattern.Length > 0 ? " (" + pattern + ")" : "") + " as a choice, after " + pending.Source + " added another one.");
+            // The client applies the same patches when it joins, so only the server reports them.
+            if (pending.Api.Side == EnumAppSide.Server)
+            {
+                // The kept result is JSON, so it goes in as an argument: its braces would break the log's format string.
+                pending.Api.Logger.Notification(
+                    "Polymorph kept the quern result {0} of {1}:{2}{3} as a choice, after {4} added another one.",
+                    old, pending.Domain, code, pattern.Length > 0 ? " (" + pattern + ")" : "", pending.Source);
+            }
         }
     }
 
@@ -170,7 +180,7 @@ public static class GrindingOverloads
         return stack == null || stack.Type == JTokenType.Null ? null : stack.ToString(Formatting.None);
     }
 
-    private sealed record PendingPatch(ICoreAPI Api, EnumJsonPatchOp Op, string Domain, string Source);
+    public sealed record Capture(ICoreAPI Api, EnumJsonPatchOp Op, string Domain, string Source, Dictionary<string, string> Before);
 }
 
 [ProtoContract]
@@ -207,51 +217,56 @@ public class GrindingOverloadsPacket
     public GrindingOverload[] Entries { get; set; } = Array.Empty<GrindingOverload>();
 }
 
+// The loader's main pass. The file is read from the loader's own cache, or from its asset before the loader first loads it.
 [HarmonyPatchCategory(GrindingOverloads.PatchCategory)]
 [HarmonyPatch(typeof(ModJsonPatchLoader), "ProcessSinglePatch")]
 public static class ProcessSinglePatchPatch
 {
-    public static void Prefix(ICoreAPI ___api, AssetLocation fileLoc, ModJsonPatch patch, AssetLocation source)
+    public static void Prefix(ICoreAPI ___api, Dictionary<AssetLocation, (JToken, IAsset)> ___jsonCache, AssetLocation fileLoc, ModJsonPatch patch, AssetLocation source, out GrindingOverloads.Capture? __state)
     {
-        GrindingOverloads.Begin(___api, patch.Op, fileLoc, source);
+        __state = null;
+        if (!GrindingOverloads.IsTypeFile(fileLoc))
+        {
+            return;
+        }
+
+        AssetLocation key = fileLoc.Clone().WithPathAppendixOnce(".json");
+        JToken? document = ___jsonCache.TryGetValue(key, out (JToken Token, IAsset Asset) cached) ? cached.Token : GrindingOverloads.Parse(___api.Assets.TryGet(key));
+        __state = GrindingOverloads.Before(___api, patch.Op, key, source, document);
     }
 
-    public static void Finalizer()
+    public static void Postfix(Dictionary<AssetLocation, (JToken, IAsset)> ___jsonCache, AssetLocation fileLoc, GrindingOverloads.Capture? __state)
     {
-        GrindingOverloads.End();
+        if (__state != null && ___jsonCache.TryGetValue(fileLoc.Clone().WithPathAppendixOnce(".json"), out (JToken Token, IAsset Asset) cached))
+        {
+            GrindingOverloads.After(__state, cached.Token);
+        }
     }
 }
 
+// The single-patch path, which writes the patched file back into its asset.
 [HarmonyPatchCategory(GrindingOverloads.PatchCategory)]
 [HarmonyPatch(typeof(ModJsonPatchLoader), nameof(ModJsonPatchLoader.ApplyPatch))]
 public static class ApplyPatchPatch
 {
-    public static void Prefix(ICoreAPI ___api, AssetLocation patchSourcefile, ModJsonPatch jsonPatch)
+    public static void Prefix(ICoreAPI ___api, AssetLocation patchSourcefile, ModJsonPatch jsonPatch, out GrindingOverloads.Capture? __state)
     {
-        GrindingOverloads.Begin(___api, jsonPatch.Op, jsonPatch.File, patchSourcefile);
-    }
-
-    public static void Finalizer()
-    {
-        GrindingOverloads.End();
-    }
-}
-
-// Both patch paths of the loader end in PatchDocument.ApplyTo, where the item JSON is compared before and after.
-[HarmonyPatchCategory(GrindingOverloads.PatchCategory)]
-[HarmonyPatch(typeof(PatchDocument), nameof(PatchDocument.ApplyTo), new[] { typeof(JToken) })]
-public static class PatchDocumentApplyPatch
-{
-    public static void Prefix(object[] __args, out Dictionary<string, string>? __state)
-    {
-        __state = GrindingOverloads.Before(__args[0]);
-    }
-
-    public static void Postfix(object[] __args, Dictionary<string, string>? __state)
-    {
-        if (__state != null)
+        __state = null;
+        AssetLocation? file = jsonPatch.File;
+        if (file == null || file.Path.EndsWith('*') || !GrindingOverloads.IsTypeFile(file))
         {
-            GrindingOverloads.After(__args[0], __state);
+            return;
+        }
+
+        AssetLocation key = file.Clone().WithPathAppendixOnce(".json");
+        __state = GrindingOverloads.Before(___api, jsonPatch.Op, key, patchSourcefile, GrindingOverloads.Parse(___api.Assets.TryGet(key)));
+    }
+
+    public static void Postfix(ICoreAPI ___api, ModJsonPatch jsonPatch, GrindingOverloads.Capture? __state)
+    {
+        if (__state != null && jsonPatch.File != null)
+        {
+            GrindingOverloads.After(__state, GrindingOverloads.Parse(___api.Assets.TryGet(jsonPatch.File.Clone().WithPathAppendixOnce(".json"))));
         }
     }
 }
