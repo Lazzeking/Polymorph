@@ -1,0 +1,5 @@
+{
+	"change-result": "Change result",
+	"result-locked": "Result is set until this item is ground",
+	"ground-into-more": "When ground: Turns into {0}x {1} and {2} more"
+}

@@ -1,0 +1,14 @@
+[
+  {
+    "op": "add",
+    "path": "/grindingProps",
+    "value": { "groundStack": { "type": "item", "code": "game:ingot-copper", "stackSize": 1 } },
+    "file": "game:itemtypes/resource/flint.json"
+  },
+  {
+    "op": "add",
+    "path": "/grindingProps",
+    "value": { "groundStack": { "type": "item", "code": "game:ingot-gold", "stackSize": 1 } },
+    "file": "game:itemtypes/resource/flint.json"
+  }
+]

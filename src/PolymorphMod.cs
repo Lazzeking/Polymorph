@@ -3,23 +3,28 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Text;
 using HarmonyLib;
 using ProtoBuf;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
+using Vintagestory.API.MathTools;
 using Vintagestory.API.Server;
 using Vintagestory.Common;
+using Vintagestory.GameContent;
 
 namespace Polymorph;
 
-public class PolymorphMod : ModSystem
+public class PolymorphMod : ModSystem, IPolymorphChoices
 {
     public const string IconPath = "textures/gui/cycle.svg";
     public const string ConfigFile = "polymorph.json";
     public const string ConflictsFile = "polymorph-conflicts.txt";
+    public const string QuernPrefix = "quern:";
 
     private static Harmony? _harmony;
+    private static readonly ConditionalWeakTable<ICoreAPI, PolymorphMod> Instances = new();
 
     private readonly Dictionary<(string Player, string Arrangement), string> _choices = new();
     private readonly HashSet<string> _denied = new(StringComparer.OrdinalIgnoreCase);
@@ -38,15 +43,66 @@ public class PolymorphMod : ModSystem
 
     public bool HasAlternatives => _matches.Count > 1;
 
+    public bool Locked => false;
+
+    public static PolymorphMod? Of(ICoreAPI api)
+    {
+        return Instances.TryGetValue(api, out PolymorphMod? mod) ? mod : null;
+    }
+
     public override void Start(ICoreAPI api)
     {
+        Instances.AddOrUpdate(api, this);
         if (_harmony != null)
         {
             return;
         }
 
         _harmony = new Harmony("polymorph");
-        _harmony.PatchAll(typeof(PolymorphMod).Assembly);
+        _harmony.PatchAllUncategorized(typeof(PolymorphMod).Assembly);
+        if (PatchCategory(_harmony, api, QuernChoices.PatchCategory, "querns keep their vanilla results"))
+        {
+            PatchCategory(_harmony, api, QuernChoices.HandbookPatchCategory, "the handbook shows only the default quern results");
+            PatchCategory(_harmony, api, GrindingOverloads.PatchCategory, "a mod that adds a quern result over another one replaces it, as in vanilla");
+        }
+    }
+
+    // If another mod changed what a category patches so one patch fails, the whole category is taken back out
+    // and the rest of the mod keeps working.
+    private static bool PatchCategory(Harmony harmony, ICoreAPI api, string category, string fallback)
+    {
+        try
+        {
+            harmony.PatchCategory(typeof(PolymorphMod).Assembly, category);
+            return true;
+        }
+        catch (Exception exception)
+        {
+            api.Logger.Warning("Polymorph could not apply its " + category + " patches, so " + fallback + ": " + exception.Message);
+            foreach (MethodBase original in harmony.GetPatchedMethods().ToList())
+            {
+                Patches? info = Harmony.GetPatchInfo(original);
+                if (info == null)
+                {
+                    continue;
+                }
+
+                foreach (Patch patch in info.Prefixes.Concat(info.Postfixes).Concat(info.Transpilers).Concat(info.Finalizers))
+                {
+                    if (patch.owner == harmony.Id && InCategory(patch.PatchMethod.DeclaringType, category))
+                    {
+                        harmony.Unpatch(original, patch.PatchMethod);
+                    }
+                }
+            }
+
+            return false;
+        }
+    }
+
+    private static bool InCategory(Type? type, string category)
+    {
+        return type != null && type.GetCustomAttributes<HarmonyPatchCategory>(false).Any(attribute => attribute.info.category == category);
     }
 
     public override void StartClientSide(ICoreClientAPI api)
@@ -56,8 +112,11 @@ public class PolymorphMod : ModSystem
             .RegisterChannel("polymorph")
             .RegisterMessageType<SelectRecipePacket>()
             .RegisterMessageType<DenyListPacket>()
-            .SetMessageHandler<DenyListPacket>(OnDenyList);
-        _choiceDialog = new PolymorphChoiceDialog(api, SelectChoice);
+            .RegisterMessageType<QuernChoicePacket>()
+            .RegisterMessageType<GrindingOverloadsPacket>()
+            .SetMessageHandler<DenyListPacket>(OnDenyList)
+            .SetMessageHandler<GrindingOverloadsPacket>(OnGrindingOverloads);
+        _choiceDialog = new PolymorphChoiceDialog(api);
         if (_harmony != null)
         {
             SurvivalInventoryPatch.PatchOverhaulLib(_harmony, api);
@@ -78,7 +137,11 @@ public class PolymorphMod : ModSystem
             .RegisterChannel("polymorph")
             .RegisterMessageType<SelectRecipePacket>()
             .RegisterMessageType<DenyListPacket>()
-            .SetMessageHandler<SelectRecipePacket>(OnRecipeSelected);
+            .RegisterMessageType<QuernChoicePacket>()
+            .RegisterMessageType<GrindingOverloadsPacket>()
+            .SetMessageHandler<SelectRecipePacket>(OnRecipeSelected)
+            .SetMessageHandler<QuernChoicePacket>(QuernChoices.OnChoicePacket);
+        api.Event.PlayerNowPlaying += SendGrindingOverloads;
         api.Event.PlayerNowPlaying += SendDenyList;
         api.ChatCommands
             .Create("polymorph")
@@ -115,6 +178,7 @@ public class PolymorphMod : ModSystem
 
         Icon?.Dispose();
         Icon = null;
+        QuernChoices.Reset();
         _harmony?.UnpatchAll("polymorph");
         _harmony = null;
     }
@@ -125,6 +189,54 @@ public class PolymorphMod : ModSystem
         {
             _choiceDialog.TryClose();
         }
+    }
+
+    public void CloseChoicesFor(object owner)
+    {
+        if (ChoicesOpenFor(owner))
+        {
+            _choiceDialog!.TryClose();
+        }
+    }
+
+    public bool ChoicesOpenFor(object owner)
+    {
+        return _choiceDialog?.IsOpened() == true && _choiceDialog.Owner == owner;
+    }
+
+    public void RefreshChoicesFor(object owner, IReadOnlyList<ItemStack?> outputs, int active, Action<int> onSelected)
+    {
+        if (ChoicesOpenFor(owner))
+        {
+            _choiceDialog!.Refresh(outputs, active, onSelected);
+        }
+    }
+
+    // Opens the result panel beside a choice button, or closes it when it is already open.
+    public void ToggleChoiceDialog(double renderX, double renderY, double outerWidth, double outerHeight, IReadOnlyList<ItemStack?> outputs, int active, Action<int> onSelected, object owner, bool below = false)
+    {
+        if (_choiceDialog == null)
+        {
+            return;
+        }
+
+        if (_choiceDialog.IsOpened())
+        {
+            _choiceDialog.TryClose();
+            return;
+        }
+
+        if (outputs.Count < 2)
+        {
+            return;
+        }
+
+        _choiceDialog.Open(renderX, renderY, outerWidth, outerHeight, outputs, active, onSelected, owner, below);
+    }
+
+    public void SendQuernChoice(BlockPos pos, string key)
+    {
+        _clientChannel?.SendPacket(new QuernChoicePacket { X = pos.X, Y = pos.Y, Z = pos.Z, Dimension = pos.dimension, Key = key });
     }
 
     public static bool TryResolve(InventoryCraftingGrid grid)
@@ -177,23 +289,10 @@ public class PolymorphMod : ModSystem
 
     public void ToggleChoices(double renderX, double renderY, double outerWidth, double outerHeight)
     {
-        if (_choiceDialog == null)
-        {
-            return;
-        }
-
-        if (_choiceDialog.IsOpened())
-        {
-            _choiceDialog.TryClose();
-            return;
-        }
-
-        if (_matches.Count < 2)
-        {
-            return;
-        }
-
-        _choiceDialog.Open(renderX, renderY, outerWidth, outerHeight, _matches, _activeKey);
+        List<GridRecipe> matches = _matches;
+        int active = matches.FindIndex(recipe => RecipeKey(recipe) == _activeKey);
+        ItemStack?[] outputs = matches.Select(recipe => recipe.Output?.ResolvedItemStack).ToArray();
+        ToggleChoiceDialog(renderX, renderY, outerWidth, outerHeight, outputs, active, index => SelectChoice(RecipeKey(matches[index])), this);
     }
 
     public void SelectChoice(string recipeKey)
@@ -236,7 +335,7 @@ public class PolymorphMod : ModSystem
             _activeKey = activeKey;
             if (changed)
             {
-                CloseChoices();
+                CloseChoicesFor(this);
             }
         }
     }
@@ -358,7 +457,7 @@ public class PolymorphMod : ModSystem
         (List<string> accepted, List<string> invalid) = ScanDenyEntries(api, config.Deny);
         foreach (string entry in invalid)
         {
-            api.Logger.Warning("Polymorph denylist entry does not match a grid recipe: " + entry);
+            api.Logger.Warning("Polymorph denylist entry does not match a grid recipe or quern result: " + entry);
         }
 
         ReplaceDenied(accepted.ToArray());
@@ -374,6 +473,8 @@ public class PolymorphMod : ModSystem
             return (accepted, invalid);
         }
 
+        HashSet<string>? quernKeys = null;
+
         foreach (string name in names)
         {
             string trimmed = name.Trim();
@@ -382,7 +483,7 @@ public class PolymorphMod : ModSystem
                 continue;
             }
 
-            if (IsKnownDenyEntry(api, trimmed))
+            if (IsKnownDenyEntry(api, trimmed, ref quernKeys))
             {
                 accepted.Add(trimmed);
             }
@@ -395,8 +496,14 @@ public class PolymorphMod : ModSystem
         return (accepted, invalid);
     }
 
-    private static bool IsKnownDenyEntry(ICoreServerAPI api, string entry)
+    private static bool IsKnownDenyEntry(ICoreServerAPI api, string entry, ref HashSet<string>? quernKeys)
     {
+        if (entry.StartsWith(QuernPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            quernKeys ??= AllQuernDenyKeys(api);
+            return quernKeys.Contains(entry);
+        }
+
         foreach (GridRecipe recipe in api.World.GridRecipes)
         {
             if (EntryDenies(entry, recipe))
@@ -437,13 +544,13 @@ public class PolymorphMod : ModSystem
             players++;
         }
 
-        string message = "Reloaded " + _denied.Count + " denied recipes for " + players + " connected players.";
+        string message = "Reloaded " + _denied.Count + " denied results for " + players + " connected players.";
         if (invalid.Count == 0)
         {
             return TextCommandResult.Success(message);
         }
 
-        return TextCommandResult.Success(message + " No matching grid recipe for: " + string.Join(", ", invalid));
+        return TextCommandResult.Success(message + " No matching grid recipe or quern result for: " + string.Join(", ", invalid));
     }
 
     private TextCommandResult CheckDenySyntax(ICoreServerAPI api)
@@ -466,16 +573,37 @@ public class PolymorphMod : ModSystem
         (List<string> accepted, List<string> invalid) = ScanDenyEntries(api, config.Deny);
         if (invalid.Count == 0)
         {
-            return TextCommandResult.Success("Denylist is ok. " + accepted.Count + " entries match a grid recipe. The list was not changed.");
+            return TextCommandResult.Success("Denylist is ok. " + accepted.Count + " entries match a grid recipe or quern result. The list was not changed.");
         }
 
         return TextCommandResult.Success(
-            "Denylist was not changed. " + invalid.Count + " entries do not match a grid recipe: " + string.Join(", ", invalid));
+            "Denylist was not changed. " + invalid.Count + " entries do not match a grid recipe or quern result: " + string.Join(", ", invalid));
     }
 
     private void SendDenyList(IServerPlayer player)
     {
         _serverChannel?.SendPacket(new DenyListPacket { Names = _denied.ToArray() }, player);
+    }
+
+    // Item types come from the server, so the quern results it kept from mod patches come along with them.
+    private void SendGrindingOverloads(IServerPlayer player)
+    {
+        if (_serverApi != null)
+        {
+            _serverChannel?.SendPacket(new GrindingOverloadsPacket { Entries = GrindingOverloads.For(_serverApi).ToArray() }, player);
+        }
+    }
+
+    private void OnGrindingOverloads(GrindingOverloadsPacket packet)
+    {
+        if (_clientApi == null)
+        {
+            return;
+        }
+
+        GrindingOverloads.Replace(_clientApi, packet.Entries);
+        QuernChoices.Reset();
+        GrindingHandbook.ReloadOpenPages(_clientApi);
     }
 
     private void OnDenyList(DenyListPacket packet)
@@ -485,6 +613,16 @@ public class PolymorphMod : ModSystem
         if (player != null)
         {
             Rerun(player);
+        }
+
+        if (_choiceDialog?.Owner is BlockEntityQuern quern)
+        {
+            QuernChoiceSource.Refresh(quern);
+        }
+
+        if (_clientApi != null)
+        {
+            GrindingHandbook.ReloadOpenPages(_clientApi);
         }
     }
 
@@ -524,6 +662,84 @@ public class PolymorphMod : ModSystem
         return false;
     }
 
+    public bool IsDenied(CollectibleObject input, GrindingProperties option)
+    {
+        if (_denied.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (string key in QuernDenyKeys(input, option))
+        {
+            if (_denied.Contains(key))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // quern:<input>@<output> and quern:<input>@<output> x<size>
+    private static IEnumerable<string> QuernDenyKeys(CollectibleObject input, GrindingProperties option)
+    {
+        ItemStack? output = QuernChoices.Output(option);
+        if (input.Code == null || output?.Collectible?.Code == null)
+        {
+            yield break;
+        }
+
+        string prefix = QuernPrefix + input.Code + "@";
+        yield return prefix + output.Collectible.Code;
+        yield return prefix + QuernChoices.Key(option);
+    }
+
+    private static string QuernDenyId(CollectibleObject input, GrindingProperties option)
+    {
+        return QuernPrefix + input.Code + "@" + QuernChoices.Key(option);
+    }
+
+    private static HashSet<string> AllQuernDenyKeys(ICoreServerAPI api)
+    {
+        var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach ((CollectibleObject input, List<GrindingProperties> options) in Grindables(api))
+        {
+            foreach (GrindingProperties option in options)
+            {
+                keys.UnionWith(QuernDenyKeys(input, option));
+            }
+        }
+
+        return keys;
+    }
+
+    // Every item a quern can grind, with all its results, denied or not.
+    private static IEnumerable<(CollectibleObject Input, List<GrindingProperties> Options)> Grindables(ICoreServerAPI api)
+    {
+        foreach (CollectibleObject? collectible in api.World.Collectibles)
+        {
+            if (collectible?.Code == null)
+            {
+                continue;
+            }
+
+            List<GrindingProperties> options;
+            try
+            {
+                options = QuernChoices.AllOptions(api.World, QuernChoices.StackOf(collectible));
+            }
+            catch (Exception)
+            {
+                continue;
+            }
+
+            if (options.Count > 0)
+            {
+                yield return (collectible, options);
+            }
+        }
+    }
+
     private static IEnumerable<string> DenyKeys(GridRecipe recipe)
     {
         AssetLocation? name = recipe.Name;
@@ -556,8 +772,12 @@ public class PolymorphMod : ModSystem
             string folder = api.GetOrCreateDataPath("ModConfig");
             string path = Path.Combine(folder, ConflictsFile);
             List<ConflictGroup> groups = ConflictGroups(api);
-            File.WriteAllText(path, ConflictReport(groups));
-            return TextCommandResult.Success("Wrote " + groups.Count + " conflict groups to " + path);
+            List<(CollectibleObject Input, List<GrindingProperties> Options)> querns = Grindables(api)
+                .Where(grindable => grindable.Options.Count > 1)
+                .OrderBy(grindable => grindable.Input.Code.ToString(), StringComparer.Ordinal)
+                .ToList();
+            File.WriteAllText(path, ConflictReport(groups) + QuernReport(querns));
+            return TextCommandResult.Success("Wrote " + groups.Count + " grid and " + querns.Count + " quern conflict groups to " + path);
         }
         catch (Exception exception)
         {
@@ -888,7 +1108,8 @@ public class PolymorphMod : ModSystem
         report.AppendLine("Example:");
         report.AppendLine("{");
         report.AppendLine("  \"Deny\": [");
-        report.AppendLine("    \"doublerecipetest:recipes/grid/double.json@game:ingot-gold x1\"");
+        report.AppendLine("    \"doublerecipetest:recipes/grid/double.json@game:ingot-gold x1\",");
+        report.AppendLine("    \"quern:game:flint@game:ingot-gold x1\"");
         report.AppendLine("  ]");
         report.AppendLine("}");
         report.AppendLine();
@@ -914,6 +1135,43 @@ public class PolymorphMod : ModSystem
 
                 report.AppendLine();
                 report.Append("  deny: \"").Append(DenyId(recipe)).AppendLine("\"");
+            }
+
+            report.AppendLine();
+        }
+
+        return report.ToString();
+    }
+
+    private string QuernReport(List<(CollectibleObject Input, List<GrindingProperties> Options)> querns)
+    {
+        var report = new StringBuilder();
+        report.AppendLine("Quern");
+        report.AppendLine();
+        report.AppendLine("Each entry is one item that a quern can grind into more than one result.");
+        report.AppendLine("The deny lines go in the same Deny list. A denied result is never ground. When every result of an item is denied, the quern does not grind it.");
+        report.AppendLine();
+        if (querns.Count == 0)
+        {
+            report.AppendLine("No item grinds into more than one result.");
+            return report.ToString();
+        }
+
+        for (int index = 0; index < querns.Count; index++)
+        {
+            (CollectibleObject input, List<GrindingProperties> options) = querns[index];
+            report.Append(index + 1).Append(". ").AppendLine(input.Code.ToString());
+            report.AppendLine("  This item can grind into:");
+            foreach (GrindingProperties option in options)
+            {
+                report.Append("  ").Append(QuernChoices.Key(option));
+                if (IsDenied(input, option))
+                {
+                    report.Append(" (already denied)");
+                }
+
+                report.AppendLine();
+                report.Append("  deny: \"").Append(QuernDenyId(input, option)).AppendLine("\"");
             }
 
             report.AppendLine();
@@ -976,6 +1234,25 @@ public class SelectRecipePacket
 
     [ProtoMember(2)]
     public string RecipeKey { get; set; } = "";
+}
+
+[ProtoContract]
+public class QuernChoicePacket
+{
+    [ProtoMember(1)]
+    public int X { get; set; }
+
+    [ProtoMember(2)]
+    public int Y { get; set; }
+
+    [ProtoMember(3)]
+    public int Z { get; set; }
+
+    [ProtoMember(4)]
+    public int Dimension { get; set; }
+
+    [ProtoMember(5)]
+    public string Key { get; set; } = "";
 }
 
 [ProtoContract]
