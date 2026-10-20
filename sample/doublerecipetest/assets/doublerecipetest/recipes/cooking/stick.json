@@ -1,0 +1,40 @@
+[
+  {
+    "code": "stick-copper",
+    "perishableProps": {
+      "type": "None",
+      "freshHours": { "avg": 48 },
+      "transitionHours": { "avg": 48 },
+      "transitionRatio": 1,
+      "transitionedStack": { "type": "item", "code": "game:ingot-copper" }
+    },
+    "ingredients": [
+      {
+        "code": "stick",
+        "validStacks": [ { "type": "item", "code": "game:stick" } ],
+        "minQuantity": 1,
+        "maxQuantity": 4
+      }
+    ],
+    "cooksInto": { "type": "item", "code": "game:ingot-copper", "quantity": 1 }
+  },
+  {
+    "code": "stick-gold",
+    "perishableProps": {
+      "type": "None",
+      "freshHours": { "avg": 48 },
+      "transitionHours": { "avg": 48 },
+      "transitionRatio": 1,
+      "transitionedStack": { "type": "item", "code": "game:ingot-gold" }
+    },
+    "ingredients": [
+      {
+        "code": "stick",
+        "validStacks": [ { "type": "item", "code": "game:stick" } ],
+        "minQuantity": 1,
+        "maxQuantity": 4
+      }
+    ],
+    "cooksInto": { "type": "item", "code": "game:ingot-gold", "quantity": 1 }
+  }
+]

@@ -65,6 +65,8 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
             PatchCategory(_harmony, api, QuernChoices.HandbookPatchCategory, "the handbook shows only the default quern results");
             PatchCategory(_harmony, api, GrindingOverloads.PatchCategory, "a mod that adds a quern result over another one replaces it, as in vanilla");
         }
+
+        PatchCategory(_harmony, api, CookingChoices.PatchCategory, "cooking pots cook the first matching recipe, as in vanilla");
     }
 
     // If another mod changed what a category patches so one patch fails, the whole category is taken back out
@@ -114,6 +116,7 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
             .RegisterMessageType<DenyListPacket>()
             .RegisterMessageType<QuernChoicePacket>()
             .RegisterMessageType<GrindingOverloadsPacket>()
+            .RegisterMessageType<CookingChoicePacket>()
             .SetMessageHandler<DenyListPacket>(OnDenyList)
             .SetMessageHandler<GrindingOverloadsPacket>(OnGrindingOverloads);
         _choiceDialog = new PolymorphChoiceDialog(api);
@@ -139,8 +142,10 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
             .RegisterMessageType<DenyListPacket>()
             .RegisterMessageType<QuernChoicePacket>()
             .RegisterMessageType<GrindingOverloadsPacket>()
+            .RegisterMessageType<CookingChoicePacket>()
             .SetMessageHandler<SelectRecipePacket>(OnRecipeSelected)
-            .SetMessageHandler<QuernChoicePacket>(QuernChoices.OnChoicePacket);
+            .SetMessageHandler<QuernChoicePacket>(QuernChoices.OnChoicePacket)
+            .SetMessageHandler<CookingChoicePacket>(CookingChoices.OnChoicePacket);
         api.Event.PlayerNowPlaying += SendGrindingOverloads;
         api.Event.PlayerNowPlaying += SendDenyList;
         api.ChatCommands
@@ -237,6 +242,11 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
     public void SendQuernChoice(BlockPos pos, string key)
     {
         _clientChannel?.SendPacket(new QuernChoicePacket { X = pos.X, Y = pos.Y, Z = pos.Z, Dimension = pos.dimension, Key = key });
+    }
+
+    public void SendCookingChoice(BlockPos pos, string key)
+    {
+        _clientChannel?.SendPacket(new CookingChoicePacket { X = pos.X, Y = pos.Y, Z = pos.Z, Dimension = pos.dimension, Key = key });
     }
 
     public static bool TryResolve(InventoryCraftingGrid grid)

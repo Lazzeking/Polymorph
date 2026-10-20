@@ -126,6 +126,9 @@ public interface IPolymorphChoices
     // True once the choice can no longer change, such as a quern that has started grinding.
     bool Locked { get; }
 
+    // What the button says on hover while it is locked.
+    string LockedLangKey => "polymorph:result-locked";
+
     void ToggleChoices(double renderX, double renderY, double outerWidth, double outerHeight);
 }
 
@@ -156,6 +159,25 @@ public sealed class PolymorphChoiceButton : GuiElementTextButton
         composer.AddHoverText(Lang.Get("polymorph:change-result"), CairoFont.WhiteSmallText(), 200, bounds.FlatCopy(), "polymorphChoicesHover");
         button._hover = composer.GetHoverText("polymorphChoicesHover");
         button._hover?.SetAutoWidth(true);
+    }
+
+    // The progress arrow between an input and an output slot ends about 32 below the top of the slots.
+    private const double BelowArrow = 34;
+
+    // Shifts a button between two slots left of center, clear of the arrow head.
+    private const double LeftOfCenter = 10;
+
+    // Centered between the two slots, just under the progress arrow. It reaches into the window's bottom padding
+    // without being a child of the padded panel, so the window keeps its vanilla size.
+    public static ElementBounds BoundsBetween(ElementBounds input, ElementBounds output)
+    {
+        double size = (output.fixedHeight > 0 ? output.fixedHeight : 48) * SizeRatio;
+        ElementBounds bounds = ElementBounds.FixedSize(size, size);
+        bounds.Alignment = output.Alignment;
+        bounds.ParentBounds = output.ParentBounds;
+        bounds.fixedX = (input.fixedX + input.fixedWidth + output.fixedX - size) / 2 - LeftOfCenter;
+        bounds.fixedY = output.fixedY + BelowArrow;
+        return bounds;
     }
 
     public static ElementBounds BoundsBeside(ElementBounds slot)
@@ -211,7 +233,7 @@ public sealed class PolymorphChoiceButton : GuiElementTextButton
         if (_hoverLocked != locked)
         {
             _hoverLocked = locked;
-            _hover.SetNewText(Lang.Get(locked ? "polymorph:result-locked" : "polymorph:change-result"));
+            _hover.SetNewText(Lang.Get(locked ? _choices.LockedLangKey : "polymorph:change-result"));
         }
     }
 
