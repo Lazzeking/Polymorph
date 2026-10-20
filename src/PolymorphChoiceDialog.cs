@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 using Vintagestory.API.Config;
@@ -11,17 +12,18 @@ public sealed class PolymorphChoiceDialog : GuiDialog
     private const double Padding = 6;
     private const int MaxColumns = 8;
 
-    private readonly Action<string> _onSelected;
-    private List<GridRecipe> _recipes = new();
+    private Action<int>? _onSelected;
+    private List<ItemStack?> _outputs = new();
     private ChoiceInventory? _inventory;
     private double _buttonX;
     private double _buttonY;
     private double _buttonWidth;
     private double _buttonHeight;
+    private bool _below;
+    private string _signature = "";
 
-    public PolymorphChoiceDialog(ICoreClientAPI capi, Action<string> onSelected) : base(capi)
+    public PolymorphChoiceDialog(ICoreClientAPI capi) : base(capi)
     {
-        _onSelected = onSelected;
     }
 
     public override string ToggleKeyCombinationCode => null!;
@@ -35,18 +37,45 @@ public sealed class PolymorphChoiceDialog : GuiDialog
         return IsOpened();
     }
 
-    public void Open(double renderX, double renderY, double outerWidth, double outerHeight, IReadOnlyList<GridRecipe> recipes, string activeKey)
+    public object? Owner { get; private set; }
+
+    // Below puts the panel under the button instead of beside it, for a button that sits between two slots.
+    public void Open(double renderX, double renderY, double outerWidth, double outerHeight, IReadOnlyList<ItemStack?> outputs, int active, Action<int> onSelected, object owner, bool below = false)
     {
-        _recipes = new List<GridRecipe>(recipes);
+        _below = below;
+        _outputs = new List<ItemStack?>(outputs);
+        _onSelected = onSelected;
+        Owner = owner;
         _buttonX = renderX;
         _buttonY = renderY;
         _buttonWidth = outerWidth;
         _buttonHeight = outerHeight;
-        Compose(renderX, renderY, outerWidth, outerHeight, activeKey);
+        _signature = Signature(outputs, active);
+        Compose(renderX, renderY, outerWidth, outerHeight, active);
         if (!IsOpened())
         {
             TryOpen();
         }
+    }
+
+    // Rebuilds the open panel in place when its results or the selected one changed.
+    public void Refresh(IReadOnlyList<ItemStack?> outputs, int active, Action<int> onSelected)
+    {
+        _onSelected = onSelected;
+        string signature = Signature(outputs, active);
+        if (!IsOpened() || signature == _signature)
+        {
+            return;
+        }
+
+        _signature = signature;
+        _outputs = new List<ItemStack?>(outputs);
+        Compose(_buttonX, _buttonY, _buttonWidth, _buttonHeight, active);
+    }
+
+    private static string Signature(IReadOnlyList<ItemStack?> outputs, int active)
+    {
+        return active + "|" + string.Join("|", outputs.Select(stack => stack?.Collectible?.Code + " x" + stack?.StackSize));
     }
 
     public override void OnMouseDown(MouseEvent args)
@@ -85,14 +114,14 @@ public sealed class PolymorphChoiceDialog : GuiDialog
         }
 
         int index = _inventory.GetSlotId(slot);
-        if (index < 0 || index >= _recipes.Count)
+        if (index < 0 || index >= _outputs.Count)
         {
             return false;
         }
 
-        string key = PolymorphMod.RecipeKey(_recipes[index]);
+        Action<int>? onSelected = _onSelected;
         TryClose();
-        _onSelected(key);
+        onSelected?.Invoke(index);
         return true;
     }
 
@@ -119,18 +148,19 @@ public sealed class PolymorphChoiceDialog : GuiDialog
         }
 
         _inventory = null;
-        _recipes.Clear();
+        _outputs.Clear();
+        _onSelected = null;
+        Owner = null;
     }
 
-    private void Compose(double renderX, double renderY, double outerWidth, double outerHeight, string activeKey)
+    private void Compose(double renderX, double renderY, double outerWidth, double outerHeight, int active)
     {
-        int columns = Math.Min(MaxColumns, _recipes.Count);
-        int rows = (_recipes.Count + columns - 1) / columns;
+        int columns = Math.Min(MaxColumns, _outputs.Count);
+        int rows = (_outputs.Count + columns - 1) / columns;
         _inventory = new ChoiceInventory(columns * rows, capi);
-        for (int i = 0; i < _recipes.Count; i++)
+        for (int i = 0; i < _outputs.Count; i++)
         {
-            ItemStack? stack = _recipes[i].Output?.ResolvedItemStack?.Clone();
-            _inventory[i].Itemstack = stack;
+            _inventory[i].Itemstack = _outputs[i]?.Clone();
         }
 
         float scale = RuntimeEnv.GUIScale;
@@ -147,7 +177,16 @@ public sealed class PolymorphChoiceDialog : GuiDialog
 
         double screenW = capi.Render.FrameWidth / scale;
         double screenH = capi.Render.FrameHeight / scale;
-        if (dialog.fixedX + dialog.fixedWidth > screenW - 8)
+        if (_below)
+        {
+            dialog.fixedX = (renderX + outerWidth / 2) / scale - dialog.fixedWidth / 2;
+            dialog.fixedY = (renderY + outerHeight) / scale + 4;
+            if (dialog.fixedX + dialog.fixedWidth > screenW - 8)
+            {
+                dialog.fixedX = screenW - 8 - dialog.fixedWidth;
+            }
+        }
+        else if (dialog.fixedX + dialog.fixedWidth > screenW - 8)
         {
             double outputLeft = renderX / scale - 4 - slotSize;
             dialog.fixedX = outputLeft - 4 - dialog.fixedWidth;
@@ -174,17 +213,7 @@ public sealed class PolymorphChoiceDialog : GuiDialog
             .AddItemSlotGrid(_inventory, _ => { }, columns, slots, "choices")
             .Compose();
 
-        int active = 0;
-        for (int i = 0; i < _recipes.Count; i++)
-        {
-            if (PolymorphMod.RecipeKey(_recipes[i]) == activeKey)
-            {
-                active = i;
-                break;
-            }
-        }
-
-        SingleComposer.GetSlotGrid("choices")?.HighlightSlot(active);
+        SingleComposer.GetSlotGrid("choices")?.HighlightSlot(Math.Max(0, active));
     }
 }
 

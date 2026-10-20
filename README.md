@@ -8,6 +8,37 @@ There are some more things that what was the original project i forked (Recipe S
 
 Other than that, there is `/polymorph syntax` checks the file and tells in chat which lines don't match with a known recipe, after having checked with it you can do a simple `/polymorph reload` to send the good ones to the players who are connected at that time.
 
+## Quern
+
+When mods give an item more than one result for grinding, Polymorph keeps them all and a button between the quern input and output slots lets you pick which one that quern makes, each quern remembers its choice also when it is automated. You can still switch during the first quarter of grinding an item as instead it could lock the output switch at the start of the grinding as it was finnicky, after that the button is greyed out and it frees up when that item is done or you take the input out, vanilla behaviour is kept if you grind output 1 and then change to output 2, if the output slot is already occupied we let the quern drop it. (i thought about a little patch like dropping it into your inventory but thats no what this mod should do)
+
+We use plain vanilla patches and every "add patch" in json to an item that already grinds into something is kept as one more result instead of overwriting the old one:
+
+```json
+[
+  {
+    "op": "add",
+    "path": "/grindingProps",
+    "value": { "groundStack": { "type": "item", "code": "game:ingot-copper" } },
+    "file": "game:itemtypes/resource/flint.json"
+  },
+  {
+    "op": "add",
+    "path": "/grindingProps",
+    "value": { "groundStack": { "type": "item", "code": "game:ingot-gold" } },
+    "file": "game:itemtypes/resource/flint.json"
+  }
+]
+```
+
+Flint grinds into nothing in vanilla, so the first patch works exactly as in vanilla, the second one would overwrite copper, so we keep copper as a choice and gold becomes the default, the result vanilla would have ended with. The server log says which result it kept and from which patch. A `replace` patch, or any other change to the result, stays vanilla: the mod's result simply replaces the old one. If a mod removes `grindingProps`, the kept results go away too.
+
+The item tooltip shows the default result and how many more there are, for example "When ground: Turns into 1x Copper Ingot and 1 more".
+
+The handbook shows every result too: the item's page lists them all under "Grinds into", the quern's page lists them among what it grinds, and each result's page lists the item under "Created by" grinding without the denied results.
+
+Quern results go in the same denylist as grid recipes, written as `quern:<item>@<result>`, for example `"quern:game:flint@game:ingot-gold x1"` (the ` x1`  isnt necessary). A denied result is never ground and does not show in the choices as the default workings of our denylist, if every result of an item is denied, the quern does nothing, so keep an eye out. `/polymorph conflicts` lists every item with more than one quern result at the end of the file, with the deny line for each, and `/polymorph syntax` and `/polymorph reload` check quern lines too.
+
 For Vintage Story 1.22.x.
 
 ## Prior work

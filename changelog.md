@@ -1,3 +1,15 @@
+## Version 2.3.0 (unreleased)
+
+- The quern can grind an item into more than one result. When mods `add` `grindingProps` to an item that already grinds into something, the old result is kept as another choice instead of being overwritten. A `replace` stays vanilla
+- A button between the quern input and output slots picks the result. Each quern remembers its choice
+- The choice can change during the first quarter of grinding an item, then it is locked until that item is done
+- The tooltip says how many more results an item grinds into
+- The handbook shows every quern result on the item, quern and result pages, without denied ones, and updates on `/polymorph reload`
+- The choice button says "Change result" on hover
+- The denylist takes quern results as `quern:<item>@<result>`. `/polymorph conflicts`, `syntax` and `reload` handle them
+- An open result panel follows changes to the quern, and closes once the result is locked
+- If another mod changed the quern so Polymorph cannot patch it, querns stay vanilla and the crafting grid still works
+
 ## Version 2.2.0 (2026-10-15)
 
 - The mod is named Polymorph

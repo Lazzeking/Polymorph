@@ -5,6 +5,7 @@ using System.Reflection.Emit;
 using HarmonyLib;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
+using Vintagestory.API.Config;
 using Vintagestory.API.MathTools;
 using Vintagestory.Client.NoObf;
 using Vintagestory.Common;
@@ -36,11 +37,17 @@ public static class SurvivalInventoryPatch
         }
         catch (System.Exception exception)
         {
-            api.Logger.Warning("Polymorph could not add the choice button to the Overhaul Lib inventory window: " + exception.Message);
+            api.Logger.Warning("Polymorph could not add the choice button to the Overhaul Lib inventory window: {0}", exception.Message);
         }
     }
 
     public static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
+    {
+        return BeforeCompose(instructions, typeof(SurvivalInventoryPatch), nameof(AddChoiceButton), "the survival inventory dialog");
+    }
+
+    // Calls hook(composer, this) on the composer just before its Compose(bool) call. The hook returns the composer.
+    internal static IEnumerable<CodeInstruction> BeforeCompose(IEnumerable<CodeInstruction> instructions, System.Type hookType, string hookName, string where)
     {
         MethodInfo compose = AccessTools.Method(typeof(GuiComposer), "Compose", new[] { typeof(bool) });
         CodeInstruction[] codes = instructions.ToArray();
@@ -50,7 +57,7 @@ public static class SurvivalInventoryPatch
             if (!injected && i + 1 < codes.Length && codes[i + 1].Calls(compose))
             {
                 yield return CodeInstruction.LoadArgument(0);
-                yield return CodeInstruction.Call(typeof(SurvivalInventoryPatch), nameof(AddChoiceButton));
+                yield return CodeInstruction.Call(hookType, hookName);
                 injected = true;
             }
 
@@ -59,7 +66,7 @@ public static class SurvivalInventoryPatch
 
         if (!injected)
         {
-            throw new System.InvalidOperationException("Polymorph could not find GuiComposer.Compose in the survival inventory dialog.");
+            throw new System.InvalidOperationException("Polymorph could not find GuiComposer.Compose in " + where + ".");
         }
     }
 
@@ -82,15 +89,7 @@ public static class SurvivalInventoryPatch
             return composer;
         }
 
-        ElementBounds slot = output.Bounds;
-        double slotSize = slot.fixedHeight > 0 ? slot.fixedHeight : 32;
-        double size = slotSize * PolymorphChoiceButton.SizeRatio;
-        ElementBounds bounds = ElementBounds.FixedSize(size, size);
-        bounds.Alignment = slot.Alignment;
-        bounds.ParentBounds = slot.ParentBounds;
-        bounds.fixedX = slot.fixedX + slot.fixedWidth + 4;
-        bounds.fixedY = slot.fixedY + (slotSize - size) / 2;
-        composer.AddInteractiveElement(new PolymorphChoiceButton(capi, bounds, mod), "polymorphChoices");
+        PolymorphChoiceButton.AddTo(composer, capi, PolymorphChoiceButton.BoundsBeside(output.Bounds), mod);
         return composer;
     }
 }
@@ -114,64 +113,124 @@ internal static class DialogAccess
         return AccessTools.Field(typeof(GuiDialogInventory), "craftingInv").GetValue(dialog) as IInventory;
     }
 
-    public static ICoreClientAPI? capiAccess(this GuiDialogInventory dialog)
+    public static ICoreClientAPI? capiAccess(this GuiDialog dialog)
     {
         return AccessTools.Field(typeof(GuiDialog), "capi").GetValue(dialog) as ICoreClientAPI;
     }
+}
+
+public interface IPolymorphChoices
+{
+    bool HasAlternatives { get; }
+
+    // True once the choice can no longer change, such as a quern that has started grinding.
+    bool Locked { get; }
+
+    void ToggleChoices(double renderX, double renderY, double outerWidth, double outerHeight);
 }
 
 public sealed class PolymorphChoiceButton : GuiElementTextButton
 {
     public const double SizeRatio = 0.75;
 
-    private readonly PolymorphMod _mod;
+    private static readonly Vec4f Normal = new(1, 1, 1, 1);
+    private static readonly Vec4f Dimmed = new(1, 1, 1, 0.35f);
 
-    public PolymorphChoiceButton(ICoreClientAPI capi, ElementBounds bounds, PolymorphMod mod)
+    private readonly IPolymorphChoices _choices;
+    private readonly PolymorphMod? _mod;
+    private GuiElementHoverText? _hover;
+    private bool? _hoverLocked;
+
+    public PolymorphChoiceButton(ICoreClientAPI capi, ElementBounds bounds, IPolymorphChoices choices)
         : base(capi, "", CairoFont.WhiteSmallText(), CairoFont.WhiteSmallText(), () => true, bounds, EnumButtonStyle.Normal)
     {
-        _mod = mod;
+        _choices = choices;
+        _mod = capi.ModLoader.GetModSystem<PolymorphMod>();
     }
+
+    // Adds the button and its hover text, which only shows while the button does.
+    public static void AddTo(GuiComposer composer, ICoreClientAPI capi, ElementBounds bounds, IPolymorphChoices choices)
+    {
+        var button = new PolymorphChoiceButton(capi, bounds, choices);
+        composer.AddInteractiveElement(button, "polymorphChoices");
+        composer.AddHoverText(Lang.Get("polymorph:change-result"), CairoFont.WhiteSmallText(), 200, bounds.FlatCopy(), "polymorphChoicesHover");
+        button._hover = composer.GetHoverText("polymorphChoicesHover");
+        button._hover?.SetAutoWidth(true);
+    }
+
+    public static ElementBounds BoundsBeside(ElementBounds slot)
+    {
+        double slotSize = slot.fixedHeight > 0 ? slot.fixedHeight : 32;
+        double size = slotSize * SizeRatio;
+        ElementBounds bounds = ElementBounds.FixedSize(size, size);
+        bounds.Alignment = slot.Alignment;
+        bounds.ParentBounds = slot.ParentBounds;
+        bounds.fixedX = slot.fixedX + slot.fixedWidth + 4;
+        bounds.fixedY = slot.fixedY + (slotSize - size) / 2;
+        return bounds;
+    }
+
+    private bool Clickable => _choices.HasAlternatives && !_choices.Locked;
 
     public override void RenderInteractiveElements(float deltaTime)
     {
-        if (!_mod.HasAlternatives)
+        bool visible = _choices.HasAlternatives;
+        UpdateHover(visible);
+        if (!visible)
         {
             return;
         }
 
         base.RenderInteractiveElements(deltaTime);
-        if (_mod.Icon == null)
+        LoadedTexture? icon = _mod?.Icon;
+        if (icon == null)
         {
             return;
         }
 
         double inset = Bounds.OuterWidth * 0.22;
         api.Render.Render2DTexture(
-            _mod.Icon.TextureId,
+            icon.TextureId,
             (float)(Bounds.renderX + inset),
             (float)(Bounds.renderY + inset),
             (float)(Bounds.OuterWidth - inset * 2),
             (float)(Bounds.OuterHeight - inset * 2),
             120,
-            new Vec4f(1, 1, 1, 1));
+            _choices.Locked ? Dimmed : Normal);
+    }
+
+    private void UpdateHover(bool visible)
+    {
+        if (_hover == null)
+        {
+            return;
+        }
+
+        _hover.SetAutoDisplay(visible);
+        bool locked = visible && _choices.Locked;
+        if (_hoverLocked != locked)
+        {
+            _hoverLocked = locked;
+            _hover.SetNewText(Lang.Get(locked ? "polymorph:result-locked" : "polymorph:change-result"));
+        }
     }
 
     public override bool IsPositionInside(int posX, int posY)
     {
-        return _mod.HasAlternatives && base.IsPositionInside(posX, posY);
+        return Clickable && base.IsPositionInside(posX, posY);
     }
 
     public override void OnMouseDownOnElement(ICoreClientAPI api, MouseEvent args)
     {
-        if (!_mod.HasAlternatives)
+        if (!Clickable)
         {
             return;
         }
 
         base.OnMouseDownOnElement(api, args);
         args.Handled = true;
-        _mod.ToggleChoices(Bounds.renderX, Bounds.renderY, Bounds.OuterWidth, Bounds.OuterHeight);
+        _choices.ToggleChoices(Bounds.renderX, Bounds.renderY, Bounds.OuterWidth, Bounds.OuterHeight);
     }
 
-    public override string? MouseOverCursor => _mod.HasAlternatives ? "link" : null;
+    public override string? MouseOverCursor => Clickable ? "link" : null;
 }
