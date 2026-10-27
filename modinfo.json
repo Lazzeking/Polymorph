@@ -2,7 +2,7 @@
 	"type": "Code",
 	"name": "Polymorph",
 	"modid": "polymorph",
-	"version": "2.3.1",
+	"version": "2.4.0",
 	"description": "Choose which recipe the survival crafting grid uses when several match, and which result a quern grinds.",
 	"authors": [
 		"Lazzeking",
