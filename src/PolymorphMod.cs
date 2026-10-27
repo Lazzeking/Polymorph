@@ -467,7 +467,7 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
         (List<string> accepted, List<string> invalid) = ScanDenyEntries(api, config.Deny);
         foreach (string entry in invalid)
         {
-            api.Logger.Warning("Polymorph denylist entry does not match a grid recipe or quern result: {0}", entry);
+            api.Logger.Warning("Polymorph denylist entry does not match a grid recipe, quern result or cooking recipe: {0}", entry);
         }
 
         ReplaceDenied(accepted.ToArray());
@@ -512,6 +512,11 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
         {
             quernKeys ??= AllQuernDenyKeys(api);
             return quernKeys.Contains(entry);
+        }
+
+        if (entry.StartsWith(CookingConflicts.DenyPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return CookingConflicts.IsKnown(api, entry);
         }
 
         foreach (GridRecipe recipe in api.World.GridRecipes)
@@ -560,7 +565,7 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
             return TextCommandResult.Success(message);
         }
 
-        return TextCommandResult.Success(message + " No matching grid recipe or quern result for: " + string.Join(", ", invalid));
+        return TextCommandResult.Success(message + " No matching grid recipe, quern result or cooking recipe for: " + string.Join(", ", invalid));
     }
 
     private TextCommandResult CheckDenySyntax(ICoreServerAPI api)
@@ -583,11 +588,11 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
         (List<string> accepted, List<string> invalid) = ScanDenyEntries(api, config.Deny);
         if (invalid.Count == 0)
         {
-            return TextCommandResult.Success("Denylist is ok. " + accepted.Count + " entries match a grid recipe or quern result. The list was not changed.");
+            return TextCommandResult.Success("Denylist is ok. " + accepted.Count + " entries match a grid recipe, quern result or cooking recipe. The list was not changed.");
         }
 
         return TextCommandResult.Success(
-            "Denylist was not changed. " + invalid.Count + " entries do not match a grid recipe or quern result: " + string.Join(", ", invalid));
+            "Denylist was not changed. " + invalid.Count + " entries do not match a grid recipe, quern result or cooking recipe: " + string.Join(", ", invalid));
     }
 
     private void SendDenyList(IServerPlayer player)
@@ -633,6 +638,7 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
         if (_clientApi != null)
         {
             GrindingHandbook.ReloadOpenPages(_clientApi);
+            CookingChoices.RedrawOpenDialogs(_clientApi);
         }
     }
 
@@ -670,6 +676,12 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
         }
 
         return false;
+    }
+
+    // cooking:<recipe code>
+    public bool IsDenied(CookingRecipe recipe)
+    {
+        return _denied.Count > 0 && _denied.Contains(CookingConflicts.DenyId(recipe));
     }
 
     public bool IsDenied(CollectibleObject input, GrindingProperties option)
@@ -786,8 +798,9 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
                 .Where(grindable => grindable.Options.Count > 1)
                 .OrderBy(grindable => grindable.Input.Code.ToString(), StringComparer.Ordinal)
                 .ToList();
-            File.WriteAllText(path, ConflictReport(groups) + QuernReport(querns));
-            return TextCommandResult.Success("Wrote " + groups.Count + " grid and " + querns.Count + " quern conflict groups to " + path);
+            List<(string Pot, List<CookingRecipe> Recipes)> pots = CookingConflicts.Groups(api);
+            File.WriteAllText(path, ConflictReport(groups) + QuernReport(querns) + Environment.NewLine + CookingConflicts.Report(pots, IsDenied));
+            return TextCommandResult.Success("Wrote " + groups.Count + " grid, " + querns.Count + " quern and " + pots.Count + " cooking conflict groups to " + path);
         }
         catch (Exception exception)
         {
@@ -1119,7 +1132,8 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
         report.AppendLine("{");
         report.AppendLine("  \"Deny\": [");
         report.AppendLine("    \"doublerecipetest:recipes/grid/double.json@game:ingot-gold x1\",");
-        report.AppendLine("    \"quern:game:flint@game:ingot-gold x1\"");
+        report.AppendLine("    \"quern:game:flint@game:ingot-gold x1\",");
+        report.AppendLine("    \"cooking:stick-gold\"");
         report.AppendLine("  ]");
         report.AppendLine("}");
         report.AppendLine();

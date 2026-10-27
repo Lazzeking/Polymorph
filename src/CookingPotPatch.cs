@@ -31,7 +31,7 @@ public static class CookingChoices
     // The firepit whose pot the game is asking about, set while it checks, cooks or describes the pot.
     [ThreadStatic] private static BlockEntityFirepit? _firepit;
 
-    // Every recipe that fully matches these ingredients in this pot, in the game's order.
+    // Every recipe that fully matches these ingredients in this pot and is not denied, in the game's order.
     public static List<(CookingRecipe Recipe, int Servings)> Matches(IWorldAccessor world, BlockCookingContainer pot, ItemStack[] stacks)
     {
         var matches = new List<(CookingRecipe, int)>();
@@ -41,11 +41,13 @@ public static class CookingChoices
             return matches;
         }
 
+        PolymorphMod? mod = PolymorphMod.Of(world.Api);
+
         // A dirty pot only cooks recipes that make something other than food, as in GetMatchingCookingRecipe.
         bool dirty = pot.Attributes?["isDirtyPot"].AsBool() == true;
         foreach (CookingRecipe recipe in recipes)
         {
-            if (dirty && (recipe.CooksInto == null || recipe.IsFood))
+            if ((dirty && (recipe.CooksInto == null || recipe.IsFood)) || mod?.IsDenied(recipe) == true)
             {
                 continue;
             }
@@ -144,23 +146,65 @@ public static class CookingChoices
         _firepit = null;
     }
 
-    // Swaps the game's first match for the firepit's chosen recipe, when that one matches too.
+    // Swaps the game's first match for the firepit's chosen recipe, when that one matches too. A denied first match
+    // gives way to the next allowed one, or to nothing, wherever the game asks.
     internal static void Choose(BlockCookingContainer pot, IWorldAccessor world, ItemStack[] stacks, ref CookingRecipe? result, ref int servings)
     {
-        BlockEntityFirepit? firepit = _firepit;
-        string? key = firepit == null ? null : ChoiceOf(firepit);
-        if (key == null || result == null || servings <= 0 || Key(result) == key)
+        if (result == null)
         {
             return;
         }
 
-        foreach ((CookingRecipe recipe, int chosenServings) in Matches(world, pot, stacks))
+        bool denied = PolymorphMod.Of(world.Api)?.IsDenied(result) == true;
+        BlockEntityFirepit? firepit = _firepit;
+        string? key = firepit == null ? null : ChoiceOf(firepit);
+        if (!denied && (key == null || servings <= 0 || Key(result) == key))
         {
-            if (Key(recipe) == key)
+            return;
+        }
+
+        List<(CookingRecipe Recipe, int Servings)> matches = Matches(world, pot, stacks);
+        int index = key == null ? -1 : matches.FindIndex(match => Key(match.Recipe) == key);
+        if (index < 0 && denied && matches.Count > 0)
+        {
+            index = 0;
+        }
+
+        if (index >= 0)
+        {
+            result = matches[index].Recipe;
+            servings = matches[index].Servings;
+        }
+        else if (denied)
+        {
+            result = null;
+            servings = 0;
+        }
+    }
+
+    private static readonly MethodInfo? SetupDialogMethod = AccessTools.Method(typeof(GuiDialogBlockEntityFirepit), "SetupDialog");
+    private static readonly MethodInfo? SetDialogValuesMethod = AccessTools.Method(typeof(BlockEntityFirepit), "SetDialogValues");
+
+    // The firepit window only shows a new output text when a slot changes, so a new choice redraws it the same way.
+    public static void Redraw(ICoreClientAPI capi, GuiDialogBlockEntityFirepit dialog)
+    {
+        if (SetupDialogMethod != null)
+        {
+            capi.Event.EnqueueMainThreadTask(() => SetupDialogMethod.Invoke(dialog, Array.Empty<object>()), "polymorph-firepit-text");
+        }
+    }
+
+    // Works the output text of every open firepit window out again and shows it, for example after the denylist changed.
+    public static void RedrawOpenDialogs(ICoreClientAPI capi)
+    {
+        foreach (GuiDialog dialog in capi.Gui.OpenedGuis.ToList())
+        {
+            if (dialog is GuiDialogBlockEntityFirepit firepitDialog
+                && capi.World.BlockAccessor.GetBlockEntity(firepitDialog.BlockEntityPosition) is BlockEntityFirepit firepit)
             {
-                result = recipe;
-                servings = chosenServings;
-                return;
+                SetDialogValuesMethod?.Invoke(firepit, new object[] { firepitDialog.Attributes });
+                Redraw(capi, firepitDialog);
+                CookingChoiceSource.Refresh(firepit);
             }
         }
     }
@@ -288,8 +332,6 @@ public static class FirepitSavePatch
 [HarmonyPatch(typeof(BlockEntityFirepit), nameof(BlockEntityFirepit.FromTreeAttributes))]
 public static class FirepitLoadPatch
 {
-    private static readonly MethodInfo? SetupDialog = AccessTools.Method(typeof(GuiDialogBlockEntityFirepit), "SetupDialog");
-
     public static void Prefix(BlockEntityFirepit __instance, ITreeAttribute tree, out bool __state)
     {
         string? key = tree.GetString(CookingChoices.TreeKey);
@@ -297,13 +339,11 @@ public static class FirepitLoadPatch
         CookingChoices.SetChoice(__instance, key);
     }
 
-    // The dialog only shows a new output text when a slot changes, so a new recipe choice redraws it the same way.
     public static void Postfix(BlockEntityFirepit __instance, GuiDialogBlockEntityFirepit? ___clientDialog, bool __state)
     {
-        if (__state && ___clientDialog?.IsOpened() == true && __instance.Api is ICoreClientAPI capi && SetupDialog != null)
+        if (__state && ___clientDialog?.IsOpened() == true && __instance.Api is ICoreClientAPI capi)
         {
-            GuiDialogBlockEntityFirepit dialog = ___clientDialog;
-            capi.Event.EnqueueMainThreadTask(() => SetupDialog.Invoke(dialog, Array.Empty<object>()), "polymorph-firepit-text");
+            CookingChoices.Redraw(capi, ___clientDialog);
         }
 
         CookingChoiceSource.Refresh(__instance);
@@ -445,5 +485,207 @@ internal sealed class CookingChoiceSource : IPolymorphChoices
 
         IEnumerable<ItemSlot> all = slots.Slots.Prepend(firepit.inputSlot);
         return string.Join("|", all.Select(slot => slot.Itemstack == null ? "-" : slot.Itemstack.Collectible.Code + " x" + slot.Itemstack.StackSize));
+    }
+}
+
+// Cooking recipes that can cook the same pot, for /polymorph conflicts. A recipe takes a range of ingredients,
+// so this tries a few real pots per recipe: its required ingredients at their minimum, one serving each, with
+// the first valid item and then each other one in turn. It can miss conflicts between rarer combinations.
+public static class CookingConflicts
+{
+    public const string DenyPrefix = "cooking:";
+
+    private const int PotSlots = 4;
+    private const int ItemsTriedPerIngredient = 6;
+
+    public static string DenyId(CookingRecipe recipe)
+    {
+        return DenyPrefix + CookingChoices.Key(recipe);
+    }
+
+    public static bool IsKnown(ICoreServerAPI api, string entry)
+    {
+        return api.GetCookingRecipes()?.Any(recipe => DenyId(recipe).Equals(entry, StringComparison.OrdinalIgnoreCase)) == true;
+    }
+
+    public static List<(string Pot, List<CookingRecipe> Recipes)> Groups(ICoreServerAPI api)
+    {
+        var groups = new List<(string, List<CookingRecipe>)>();
+        List<CookingRecipe> recipes = api.GetCookingRecipes()?.Where(recipe => recipe.Enabled && recipe.Ingredients != null).ToList() ?? new List<CookingRecipe>();
+        var wildcards = new Dictionary<string, ItemStack?>(StringComparer.Ordinal);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (CookingRecipe recipe in recipes)
+        {
+            foreach (ItemStack[] pot in Pots(api.World, recipe, wildcards))
+            {
+                List<CookingRecipe> hits = recipes.Where(other => Cooks(other, pot)).ToList();
+                if (hits.Select(CookingChoices.Key).Distinct().Count() < 2)
+                {
+                    continue;
+                }
+
+                hits.Sort((left, right) => string.Compare(CookingChoices.Key(left), CookingChoices.Key(right), StringComparison.Ordinal));
+                if (seen.Add(string.Join("|", hits.Select(CookingChoices.Key))))
+                {
+                    groups.Add((PotLabel(pot), hits));
+                }
+            }
+        }
+
+        groups.Sort((left, right) => string.Compare(left.Item1, right.Item1, StringComparison.Ordinal));
+        return groups;
+    }
+
+    public static string Report(List<(string Pot, List<CookingRecipe> Recipes)> groups, System.Func<CookingRecipe, bool> isDenied)
+    {
+        var report = new System.Text.StringBuilder();
+        report.AppendLine("Cooking");
+        report.AppendLine();
+        report.AppendLine("Each entry is one pot of ingredients that more than one cooking recipe can cook.");
+        report.AppendLine("The deny lines go in the same Deny list. A denied recipe never cooks and does not show in the choices.");
+        report.AppendLine("Only a few ingredient combinations per recipe are tried, so a conflict between rarer combinations can be missing.");
+        report.AppendLine();
+        if (groups.Count == 0)
+        {
+            report.AppendLine("No pot can cook more than one recipe.");
+            return report.ToString();
+        }
+
+        for (int index = 0; index < groups.Count; index++)
+        {
+            (string pot, List<CookingRecipe> recipes) = groups[index];
+            report.Append(index + 1).Append(". ").AppendLine(pot);
+            report.AppendLine("  This pot can cook:");
+            foreach (CookingRecipe recipe in recipes)
+            {
+                report.Append("  ").Append(CookingChoices.Key(recipe)).Append(" (").Append(OutputLabel(recipe)).Append(')');
+                if (isDenied(recipe))
+                {
+                    report.Append(" (already denied)");
+                }
+
+                report.AppendLine();
+                report.Append("  deny: \"").Append(DenyId(recipe)).AppendLine("\"");
+            }
+
+            report.AppendLine();
+        }
+
+        return report.ToString();
+    }
+
+    private static bool Cooks(CookingRecipe recipe, ItemStack[] pot)
+    {
+        try
+        {
+            int servings = 0;
+            return recipe.Matches(pot, ref servings) && servings > 0;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    private static IEnumerable<ItemStack[]> Pots(IWorldAccessor world, CookingRecipe recipe, Dictionary<string, ItemStack?> wildcards)
+    {
+        List<CookingRecipeIngredient> required = recipe.Ingredients!.Where(ingredient => ingredient.MinQuantity > 0).ToList();
+        if (required.Count == 0)
+        {
+            required = recipe.Ingredients!.Take(1).ToList();
+        }
+
+        int[] counts = required.Select(ingredient => Math.Max(1, ingredient.MinQuantity)).ToArray();
+        if (counts.Sum() > PotSlots)
+        {
+            yield break;
+        }
+
+        List<ItemStack>[] items = required.Select(ingredient => Servings(world, ingredient, wildcards)).ToArray();
+        if (items.Any(options => options.Count == 0))
+        {
+            yield break;
+        }
+
+        int[] picks = new int[required.Count];
+        yield return Pot(items, picks, counts);
+        for (int changed = 0; changed < required.Count; changed++)
+        {
+            for (int pick = 1; pick < items[changed].Count; pick++)
+            {
+                picks[changed] = pick;
+                yield return Pot(items, picks, counts);
+            }
+
+            picks[changed] = 0;
+        }
+    }
+
+    private static ItemStack[] Pot(List<ItemStack>[] items, int[] picks, int[] counts)
+    {
+        var pot = new List<ItemStack>();
+        for (int i = 0; i < items.Length; i++)
+        {
+            for (int copy = 0; copy < counts[i]; copy++)
+            {
+                pot.Add(items[i][picks[i]].Clone());
+            }
+        }
+
+        return pot.ToArray();
+    }
+
+    // One serving of each item this ingredient takes, as many as it is worth trying.
+    private static List<ItemStack> Servings(IWorldAccessor world, CookingRecipeIngredient ingredient, Dictionary<string, ItemStack?> wildcards)
+    {
+        var servings = new List<ItemStack>();
+        foreach (CookingRecipeStack valid in ingredient.ValidStacks ?? Array.Empty<CookingRecipeStack>())
+        {
+            ItemStack? item = valid.Code.Path.Contains('*') ? Wildcard(world, valid.Code, wildcards) : valid.ResolvedItemstack?.Clone();
+            if (item == null)
+            {
+                continue;
+            }
+
+            // The amount Matches counts as one serving: the valid stack's size, in litres for a liquid.
+            WaterTightContainableProps? liquid = BlockLiquidContainerBase.GetContainableProps(item);
+            item.StackSize = liquid == null
+                ? Math.Max(1, valid.StackSize)
+                : (int)Math.Round(Math.Max(1, valid.StackSize) * liquid.ItemsPerLitre * ingredient.PortionSizeLitres);
+            servings.Add(item);
+            if (servings.Count >= ItemsTriedPerIngredient)
+            {
+                break;
+            }
+        }
+
+        return servings;
+    }
+
+    private static ItemStack? Wildcard(IWorldAccessor world, AssetLocation code, Dictionary<string, ItemStack?> wildcards)
+    {
+        string key = code.ToString();
+        if (!wildcards.TryGetValue(key, out ItemStack? item))
+        {
+            CollectibleObject? match = world.Collectibles.FirstOrDefault(collectible => collectible?.Code != null && collectible.WildCardMatch(code));
+            item = match == null ? null : QuernChoices.StackOf(match);
+            wildcards[key] = item;
+        }
+
+        return item?.Clone();
+    }
+
+    private static string PotLabel(ItemStack[] pot)
+    {
+        return string.Join(" + ", pot
+            .GroupBy(stack => stack.Collectible.Code.ToString())
+            .OrderBy(group => group.Key, StringComparer.Ordinal)
+            .Select(group => group.Key + " x" + group.Sum(stack => stack.StackSize)));
+    }
+
+    private static string OutputLabel(CookingRecipe recipe)
+    {
+        ItemStack? output = recipe.CooksInto?.ResolvedItemstack;
+        return output?.Collectible?.Code == null ? "meal" : "cooks into " + output.Collectible.Code + " x" + output.StackSize;
     }
 }

@@ -9,6 +9,9 @@
 - The denylist takes quern results as `quern:<item>@<result>`. `/polymorph conflicts`, `syntax` and `reload` handle them
 - An open result panel follows changes to the quern, and closes once the result is locked
 - If another mod changed the quern so Polymorph cannot patch it, querns stay vanilla and the crafting grid still works
+- When more than one cooking recipe matches a cooking pot, a button in the firepit window picks the recipe. Each firepit remembers its choice, and the "Will make" text follows it
+- The cooking choice can change during the first quarter of cooking, then it is locked until the pot is done
+- The denylist takes cooking recipes as `cooking:<recipe code>`. `/polymorph conflicts`, `syntax` and `reload` handle them
 
 ## Version 2.2.0 (2026-10-15)
 
