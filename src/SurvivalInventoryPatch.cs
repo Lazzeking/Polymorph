@@ -15,29 +15,48 @@ namespace Polymorph;
 [HarmonyPatch(typeof(GuiDialogInventory), "ComposeSurvivalInvDialog")]
 public static class SurvivalInventoryPatch
 {
-    public static void PatchOverhaulLib(Harmony harmony, ICoreAPI api)
+    // Some mods, such as Overhaul Lib's legacy compat, build the inventory window themselves in a prefix that skips the
+    // vanilla method, so the button is added to those prefixes too. Mods patch the window in their own start, so this
+    // waits until the world has loaded; the window is built again each time it opens.
+    public static void PatchReplacedWindows(Harmony harmony, ICoreClientAPI api)
     {
-        if (!api.ModLoader.IsModEnabled("overhaullib"))
+        api.Event.LevelFinalize += () => PatchReplacements(harmony, api);
+    }
+
+    private static void PatchReplacements(Harmony harmony, ICoreAPI api)
+    {
+        MethodInfo? original = AccessTools.Method(typeof(GuiDialogInventory), "ComposeSurvivalInvDialog");
+        Patches? info = original == null ? null : Harmony.GetPatchInfo(original);
+        if (info == null)
         {
             return;
         }
 
-        System.Type? type = AccessTools.TypeByName("CombatOverhaul.Integration.GuiDialogPatches");
-        MethodInfo? method = type == null ? null : AccessTools.DeclaredMethod(type, "GuiDialogInventory_ComposeSurvivalInvDialog");
-        if (method == null)
+        foreach (Patch prefix in info.Prefixes)
         {
-            api.Logger.Warning("Polymorph found Overhaul Lib but could not add the choice button to its inventory window.");
-            return;
-        }
+            MethodInfo method = prefix.PatchMethod;
+            ParameterInfo[] parameters = method.GetParameters();
+            // Only a prefix that can skip the vanilla method and gets the dialog first, which the button needs.
+            if (prefix.owner == harmony.Id || method.ReturnType != typeof(bool)
+                || parameters.Length == 0 || !typeof(GuiDialogInventory).IsAssignableFrom(parameters[0].ParameterType))
+            {
+                continue;
+            }
 
-        try
-        {
-            harmony.Patch(method, transpiler: new HarmonyMethod(typeof(SurvivalInventoryPatch), nameof(Transpiler)));
-            api.Logger.Notification("Polymorph added the choice button to the Overhaul Lib inventory window.");
-        }
-        catch (System.Exception exception)
-        {
-            api.Logger.Warning("Polymorph could not add the choice button to the Overhaul Lib inventory window: {0}", exception.Message);
+            if (Harmony.GetPatchInfo(method)?.Transpilers.Any(patch => patch.owner == harmony.Id) == true)
+            {
+                continue;
+            }
+
+            try
+            {
+                harmony.Patch(method, transpiler: new HarmonyMethod(typeof(SurvivalInventoryPatch), nameof(Transpiler)));
+                api.Logger.Notification("Polymorph added the choice button to the inventory window that {0} builds.", prefix.owner);
+            }
+            catch (System.Exception exception)
+            {
+                api.Logger.Warning("Polymorph could not add the choice button to the inventory window that {0} builds: {1}", prefix.owner, exception.Message);
+            }
         }
     }
 
