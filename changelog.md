@@ -1,4 +1,11 @@
-## Version 2.3.0 (unreleased)
+## Version 2.3.1 (2026-10-27)
+
+- The choice button shows up again in modpacks that use Overhaul Lib. In Overhaul Lib 2.0.10 its inventory window moved to the "Overhaul lib legacy compat" mod, so Polymorph now adds the button to whatever inventory window a mod builds instead of looking for one mod's code. The "Polymorph found Overhaul Lib but could not add the choice button" warning is gone
+- Recipes from other mods are no longer blocked. The game's own crafting grid search now runs first, with every other mod's changes to it, and Polymorph only adds the choice of result on top. A recipe another mod hides stays hidden
+- The "[ArdynLeveling] Native crafting search" warnings come from ArdynLeveling itself and also appear without Polymorph. They are harmless
+- Thanks to InsaneMonkey for the detailed report
+
+## Version 2.3.0 (2026-10-20)
 
 - The quern can grind an item into more than one result. When mods `add` `grindingProps` to an item that already grinds into something, the old result is kept as another choice instead of being overwritten. A `replace` stays vanilla
 - A button between the quern input and output slots picks the result. Each quern remembers its choice

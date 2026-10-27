@@ -119,7 +119,7 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
         _choiceDialog = new PolymorphChoiceDialog(api);
         if (_harmony != null)
         {
-            SurvivalInventoryPatch.PatchOverhaulLib(_harmony, api);
+            SurvivalInventoryPatch.PatchReplacedWindows(_harmony, api);
         }
         Icon = api.Gui.LoadSvgWithPadding(new AssetLocation(Mod.Info.ModID, IconPath), 64, 64, 4, null);
         if (Icon == null)
@@ -239,12 +239,13 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
         _clientChannel?.SendPacket(new QuernChoicePacket { X = pos.X, Y = pos.Y, Z = pos.Z, Dimension = pos.dimension, Key = key });
     }
 
-    public static bool TryResolve(InventoryCraftingGrid grid)
+    // Runs after the game's search has set its match, if any.
+    public static void Resolve(InventoryCraftingGrid grid)
     {
         PolymorphMod? mod = grid.Api.ModLoader.GetModSystem<PolymorphMod>();
         if (mod == null)
         {
-            return false;
+            return;
         }
 
         ItemSlot[] slots = CraftingGridAccess.Slots(grid);
@@ -259,20 +260,32 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
             }
         }
 
-        grid.MatchingRecipe = null;
-        CraftingGridAccess.OutputSlot(grid).Itemstack = null;
+        // When the game's search finds nothing, nothing crafts: another mod may hide recipes there on purpose.
+        GridRecipe? found = grid.MatchingRecipe;
+        List<GridRecipe> matches = found == null ? new List<GridRecipe>() : FindMatches(mod, grid, slots, gridSize, player);
 
-        List<GridRecipe> matches = FindMatches(mod, grid, slots, gridSize, player);
+        // A recipe only the game's search knows, for example one another mod adds there, stays the first choice.
+        if (found != null && !mod.IsDenied(found) && !matches.Contains(found))
+        {
+            matches.Insert(0, found);
+        }
+
         if (matches.Count == 0)
         {
-            grid.DirtySlots.Add(CraftingGridAccess.GridSizeSquared(grid));
+            if (found != null)
+            {
+                grid.MatchingRecipe = null;
+                CraftingGridAccess.OutputSlot(grid).Itemstack = null;
+                grid.DirtySlots.Add(CraftingGridAccess.GridSizeSquared(grid));
+            }
+
             mod.SetCurrent(player, slots, matches, "");
-            return true;
+            return;
         }
 
         string arrangement = ArrangementKey(slots);
         string? saved = player == null ? null : mod.ChoiceFor(player.PlayerUID, arrangement);
-        GridRecipe chosen = matches[0];
+        GridRecipe chosen = found != null && matches.Contains(found) ? found : matches[0];
         if (saved != null)
         {
             GridRecipe? remembered = matches.Find(recipe => RecipeKey(recipe) == saved);
@@ -282,9 +295,12 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
             }
         }
 
-        CraftingGridAccess.FoundMatch(grid, chosen);
+        if (chosen != found)
+        {
+            CraftingGridAccess.FoundMatch(grid, chosen);
+        }
+
         mod.SetCurrent(player, slots, matches, RecipeKey(chosen));
-        return true;
     }
 
     public void ToggleChoices(double renderX, double renderY, double outerWidth, double outerHeight)
