@@ -268,12 +268,6 @@ public static class QuernDialogPatch
         return SurvivalInventoryPatch.BeforeCompose(instructions, typeof(QuernDialogPatch), nameof(AddChoiceButton), "the quern dialog");
     }
 
-    // The progress arrow's lower edge sits about 32 below the top of the slots.
-    private const double BelowArrow = 34;
-
-    // Shifts the button left of center, clear of the arrow head.
-    private const double LeftOfCenter = 10;
-
     private static GuiComposer AddChoiceButton(GuiComposer composer, GuiDialogBlockEntityQuern dialog)
     {
         GuiElementItemSlotGrid? input = composer.GetSlotGrid("inputSlot");
@@ -288,17 +282,7 @@ public static class QuernDialogPatch
             return composer;
         }
 
-        // Centered between the two slots, just under the progress arrow. It reaches into the window's bottom padding
-        // without being a child of the padded panel, so the window keeps its vanilla size.
-        ElementBounds inputSlot = input.Bounds;
-        ElementBounds outputSlot = output.Bounds;
-        double size = (outputSlot.fixedHeight > 0 ? outputSlot.fixedHeight : 48) * PolymorphChoiceButton.SizeRatio;
-        ElementBounds bounds = ElementBounds.FixedSize(size, size);
-        bounds.Alignment = outputSlot.Alignment;
-        bounds.ParentBounds = outputSlot.ParentBounds;
-        bounds.fixedX = (inputSlot.fixedX + inputSlot.fixedWidth + outputSlot.fixedX - size) / 2 - LeftOfCenter;
-        bounds.fixedY = outputSlot.fixedY + BelowArrow;
-        PolymorphChoiceButton.AddTo(composer, capi, bounds, new QuernChoiceSource(capi, quern));
+        PolymorphChoiceButton.AddTo(composer, capi, PolymorphChoiceButton.BoundsBetween(input.Bounds, output.Bounds), new QuernChoiceSource(capi, quern));
         return composer;
     }
 }

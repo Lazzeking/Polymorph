@@ -1,4 +1,10 @@
-## Version 2.3.1 (2026-10-27)
+## Version 2.5.0 (unreleased)
+
+- When more than one cooking recipe matches a cooking pot, a button in the firepit window picks the recipe. Each firepit remembers its choice, and the "Will make" text follows it
+- The cooking choice can change during the first quarter of cooking, then it is locked until the pot is done
+- The denylist takes cooking recipes as `cooking:<recipe code>`. `/polymorph conflicts`, `syntax` and `reload` handle them
+
+## Version 2.4.0 (2026-10-27)
 
 - The choice button shows up again in modpacks that use Overhaul Lib. In Overhaul Lib 2.0.10 its inventory window moved to the "Overhaul lib legacy compat" mod, so Polymorph now adds the button to whatever inventory window a mod builds instead of looking for one mod's code. The "Polymorph found Overhaul Lib but could not add the choice button" warning is gone
 - Recipes from other mods are no longer blocked. The game's own crafting grid search now runs first, with every other mod's changes to it, and Polymorph only adds the choice of result on top. A recipe another mod hides stays hidden

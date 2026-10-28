@@ -1,5 +1,6 @@
 {
 	"change-result": "Change result",
 	"result-locked": "Result is set until this item is ground",
+	"result-locked-cooking": "Recipe is set until this is cooked",
 	"ground-into-more": "When ground: Turns into {0}x {1} and {2} more"
 }

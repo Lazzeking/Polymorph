@@ -3,8 +3,8 @@
   "modid": "doublerecipetest",
   "name": "Double Recipe Test",
   "authors": ["Lazzeking"],
-  "description": "Throwaway test mod. One column of flint, stick, and dry grass crafts either a copper ingot or a gold ingot. Flint in the quern grinds into either a copper ingot or a gold ingot.",
-  "version": "1.1.0",
+  "description": "Throwaway test mod. One column of flint, stick, and dry grass crafts either a copper ingot or a gold ingot. Flint in the quern grinds into either a copper ingot or a gold ingot. Sticks in a cooking pot cook into either one too.",
+  "version": "1.2.0",
   "dependencies": {
     "game": "1.22.0"
   }

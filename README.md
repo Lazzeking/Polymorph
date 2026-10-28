@@ -41,6 +41,12 @@ Quern results go in the same denylist as grid recipes, written as `quern:<item>@
 
 For Vintage Story 1.22.x.
 
+## Cooking pot
+
+A cooking pot on a firepit cooks the first cooking recipe that matches its ingredients. When more than one recipe matches, a button between the pot slot and the output slot lets you pick which one that firepit cooks, and the "Will make" text follows your choice. Each firepit remembers its choice. You can still switch during the first quarter of cooking. After that the button is greyed out until the pot is done. A dirty pot only offers recipes that cook into something other than food, as in vanilla.
+
+Cooking recipes go in the same denylist, written as `cooking:<recipe code>`, for example `"cooking:stick-gold"`. A denied recipe never cooks and does not show in the choices, and if it was the first match the next allowed recipe cooks instead. `/polymorph conflicts` lists pots that more than one recipe can cook, with the deny line for each recipe. It tries a few ingredient combinations per recipe, so a conflict between rarer combinations can be missing. `/polymorph syntax` and `/polymorph reload` check cooking lines too.
+
 ## Prior work
 
 This started from two other mods.
