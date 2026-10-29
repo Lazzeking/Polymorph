@@ -20,6 +20,13 @@ public sealed class PolymorphChoiceDialog : GuiDialog
     private double _buttonWidth;
     private double _buttonHeight;
     private bool _below;
+    private bool _standalone;
+    private string? _caption;
+    private List<string?>? _labels;
+    private List<string?>? _notes;
+
+    // A caption gets this width at least, and as many lines above the slots as its text wraps into.
+    private const double CaptionWidth = 280;
     private string _signature = "";
 
     public PolymorphChoiceDialog(ICoreClientAPI capi) : base(capi)
@@ -28,7 +35,9 @@ public sealed class PolymorphChoiceDialog : GuiDialog
 
     public override string ToggleKeyCombinationCode => null!;
 
-    public override EnumDialogType DialogType => EnumDialogType.HUD;
+    // Beside a window the panel is a HUD, and the window frees the mouse. On its own it is a dialog, because the game
+    // only frees the mouse for open dialogs.
+    public override EnumDialogType DialogType => _standalone ? EnumDialogType.Dialog : EnumDialogType.HUD;
 
     public override double DrawOrder => 0.6;
 
@@ -40,9 +49,15 @@ public sealed class PolymorphChoiceDialog : GuiDialog
     public object? Owner { get; private set; }
 
     // Below puts the panel under the button instead of beside it, for a button that sits between two slots.
-    public void Open(double renderX, double renderY, double outerWidth, double outerHeight, IReadOnlyList<ItemStack?> outputs, int active, Action<int> onSelected, object owner, bool below = false)
+    // A caption explains the choice when the panel opens on its own, away from the window it belongs to.
+    // Labels go under each result, and notes are added to its tooltip, for example when a barrel makes it.
+    public void Open(double renderX, double renderY, double outerWidth, double outerHeight, IReadOnlyList<ItemStack?> outputs, int active, Action<int> onSelected, object owner, bool below = false, bool standalone = false, string? caption = null, IReadOnlyList<string?>? labels = null, IReadOnlyList<string?>? notes = null)
     {
         _below = below;
+        _standalone = standalone;
+        _caption = caption;
+        _labels = labels?.ToList();
+        _notes = notes?.ToList();
         _outputs = new List<ItemStack?>(outputs);
         _onSelected = onSelected;
         Owner = owner;
@@ -50,7 +65,7 @@ public sealed class PolymorphChoiceDialog : GuiDialog
         _buttonY = renderY;
         _buttonWidth = outerWidth;
         _buttonHeight = outerHeight;
-        _signature = Signature(outputs, active);
+        _signature = Signature(outputs, active) + "|" + string.Join("|", labels ?? Array.Empty<string?>());
         Compose(renderX, renderY, outerWidth, outerHeight, active);
         if (!IsOpened())
         {
@@ -59,10 +74,10 @@ public sealed class PolymorphChoiceDialog : GuiDialog
     }
 
     // Rebuilds the open panel in place when its results or the selected one changed.
-    public void Refresh(IReadOnlyList<ItemStack?> outputs, int active, Action<int> onSelected)
+    public void Refresh(IReadOnlyList<ItemStack?> outputs, int active, Action<int> onSelected, IReadOnlyList<string?>? labels = null, IReadOnlyList<string?>? notes = null)
     {
         _onSelected = onSelected;
-        string signature = Signature(outputs, active);
+        string signature = Signature(outputs, active) + "|" + string.Join("|", labels ?? Array.Empty<string?>());
         if (!IsOpened() || signature == _signature)
         {
             return;
@@ -70,6 +85,8 @@ public sealed class PolymorphChoiceDialog : GuiDialog
 
         _signature = signature;
         _outputs = new List<ItemStack?>(outputs);
+        _labels = labels?.ToList();
+        _notes = notes?.ToList();
         Compose(_buttonX, _buttonY, _buttonWidth, _buttonHeight, active);
     }
 
@@ -149,6 +166,8 @@ public sealed class PolymorphChoiceDialog : GuiDialog
 
         _inventory = null;
         _outputs.Clear();
+        _labels = null;
+        _notes = null;
         _onSelected = null;
         Owner = null;
     }
@@ -161,6 +180,7 @@ public sealed class PolymorphChoiceDialog : GuiDialog
         for (int i = 0; i < _outputs.Count; i++)
         {
             _inventory[i].Itemstack = _outputs[i]?.Clone();
+            ((ChoiceSlot)_inventory[i]).Note = _notes != null && i < _notes.Count ? _notes[i] : null;
         }
 
         float scale = RuntimeEnv.GUIScale;
@@ -169,8 +189,46 @@ public sealed class PolymorphChoiceDialog : GuiDialog
         double slotsX = renderX / scale + outerWidth / scale + 4;
         double slotsY = renderY / scale - (slotSize - buttonHeight) / 2;
 
-        ElementBounds slots = ElementStdBounds.SlotGrid(EnumDialogArea.None, 0, 0, columns, rows);
-        ElementBounds dialog = slots.ForkBoundingParent(Padding, Padding, Padding, Padding);
+        // With labels every result gets a cell as wide as its label, with the label under its slot.
+        CairoFont labelFont = CairoFont.WhiteDetailText().WithOrientation(EnumTextOrientation.Center);
+        double slotSizeUnscaled = GuiElementPassiveItemSlot.unscaledSlotSize;
+        double cellWidth = 0;
+        double labelHeight = 0;
+        ElementBounds slots;
+        if (_labels != null)
+        {
+            cellWidth = slotSizeUnscaled + 8;
+            foreach (string? label in _labels)
+            {
+                if (label != null)
+                {
+                    cellWidth = Math.Max(cellWidth, labelFont.GetTextExtents(label).Width / scale + 8);
+                }
+            }
+
+            labelHeight = capi.Gui.Text.GetLineHeight(labelFont) / scale;
+            slots = ElementBounds.Fixed(0, 0, columns * cellWidth, rows * (slotSizeUnscaled + labelHeight + 8));
+        }
+        else
+        {
+            slots = ElementStdBounds.SlotGrid(EnumDialogArea.None, 0, 0, columns, rows);
+        }
+
+        ElementBounds? captionBounds = null;
+        ElementBounds content = slots;
+        CairoFont captionFont = CairoFont.WhiteSmallText().WithOrientation(EnumTextOrientation.Center);
+        if (_caption != null)
+        {
+            // The text is measured at GUI scale, so the width goes in scaled and the height comes back scaled.
+            double width = Math.Max(CaptionWidth, slots.fixedWidth);
+            double height = capi.Gui.Text.GetMultilineTextHeight(captionFont, _caption, GuiElement.scaled(width)) / scale + 2;
+            captionBounds = ElementBounds.Fixed(0, 0, width, height);
+            slots.fixedX = (width - slots.fixedWidth) / 2;
+            slots.fixedY = height + 6;
+            content = ElementBounds.Fixed(0, 0, width, slots.fixedY + slots.fixedHeight);
+        }
+
+        ElementBounds dialog = content.ForkBoundingParent(Padding, Padding, Padding, Padding);
         dialog.Alignment = EnumDialogArea.None;
         dialog.fixedX = slotsX - Padding;
         dialog.fixedY = slotsY - Padding;
@@ -208,24 +266,69 @@ public sealed class PolymorphChoiceDialog : GuiDialog
         }
 
         SingleComposer?.Dispose();
-        SingleComposer = capi.Gui.CreateCompo("polymorphchoices", dialog)
-            .AddShadedDialogBG(ElementBounds.Fill, false, 2, 0.95f)
-            .AddItemSlotGrid(_inventory, _ => { }, columns, slots, "choices")
-            .Compose();
+        GuiComposer composer = capi.Gui.CreateCompo("polymorphchoices", dialog)
+            .AddShadedDialogBG(ElementBounds.Fill, false, 2, 0.95f);
+        if (_caption != null && captionBounds != null)
+        {
+            composer.AddStaticText(_caption, captionFont, captionBounds);
+        }
 
-        SingleComposer.GetSlotGrid("choices")?.HighlightSlot(Math.Max(0, active));
+        if (_labels == null)
+        {
+            SingleComposer = composer
+                .AddItemSlotGrid(_inventory, _ => { }, columns, slots, "choices")
+                .Compose();
+            SingleComposer.GetSlotGrid("choices")?.HighlightSlot(Math.Max(0, active));
+            return;
+        }
+
+        double rowHeight = slotSizeUnscaled + labelHeight + 8;
+        for (int i = 0; i < _outputs.Count; i++)
+        {
+            double cellX = slots.fixedX + (i % columns) * cellWidth;
+            double cellY = slots.fixedY + (i / columns) * rowHeight;
+            ElementBounds slot = ElementStdBounds.SlotGrid(EnumDialogArea.None, cellX + (cellWidth - slotSizeUnscaled) / 2, cellY, 1, 1);
+            composer.AddItemSlotGrid(_inventory, _ => { }, 1, new[] { i }, slot, "choice" + i);
+            string? label = i < _labels.Count ? _labels[i] : null;
+            if (label != null)
+            {
+                composer.AddStaticText(label, labelFont, ElementBounds.Fixed(cellX, cellY + slotSizeUnscaled + 4, cellWidth, labelHeight));
+            }
+        }
+
+        SingleComposer = composer.Compose();
+        if (active >= 0 && active < _outputs.Count)
+        {
+            SingleComposer.GetSlotGrid("choice" + active)?.HighlightSlot(active);
+        }
     }
 }
 
 internal sealed class ChoiceInventory : InventoryGeneric
 {
     public ChoiceInventory(int count, ICoreAPI api)
-        : base(count, "polymorph-choices", api, (_, inventory) => new ItemSlot(inventory))
+        : base(count, "polymorph-choices", api, (_, inventory) => new ChoiceSlot(inventory))
     {
     }
 
     public override object ActivateSlot(int slotId, ItemSlot sourceSlot, ref ItemStackMoveOperation op)
     {
         return null!;
+    }
+}
+
+// A result slot whose tooltip can say one more thing about the result, such as when a barrel makes it.
+internal sealed class ChoiceSlot : ItemSlot
+{
+    public ChoiceSlot(InventoryBase inventory) : base(inventory)
+    {
+    }
+
+    public string? Note { get; set; }
+
+    public override string GetStackDescription(IClientWorldAccessor world, bool extendedDebugInfo)
+    {
+        string description = base.GetStackDescription(world, extendedDebugInfo);
+        return Note == null ? description : Note + "\n" + description;
     }
 }

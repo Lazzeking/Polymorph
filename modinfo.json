@@ -2,8 +2,8 @@
 	"type": "Code",
 	"name": "Polymorph",
 	"modid": "polymorph",
-	"version": "2.5.0",
-	"description": "Choose which recipe the survival crafting grid uses when several match, and which result a quern grinds.",
+	"version": "2.6.0",
+	"description": "Choose which recipe the crafting grid, quern, cooking pot and barrel use when several match.",
 	"authors": [
 		"Lazzeking",
 		"DArkHekRoMaNT (Recipe Selector, used as a basis)",

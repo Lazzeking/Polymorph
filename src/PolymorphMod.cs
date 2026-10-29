@@ -67,6 +67,7 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
         }
 
         PatchCategory(_harmony, api, CookingChoices.PatchCategory, "cooking pots cook the first matching recipe, as in vanilla");
+        PatchCategory(_harmony, api, BarrelChoices.PatchCategory, "barrels use the first matching recipe, as in vanilla");
     }
 
     // If another mod changed what a category patches so one patch fails, the whole category is taken back out
@@ -117,7 +118,10 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
             .RegisterMessageType<QuernChoicePacket>()
             .RegisterMessageType<GrindingOverloadsPacket>()
             .RegisterMessageType<CookingChoicePacket>()
+            .RegisterMessageType<BarrelChoicePacket>()
+            .RegisterMessageType<BarrelChoiceRequestPacket>()
             .SetMessageHandler<DenyListPacket>(OnDenyList)
+            .SetMessageHandler<BarrelChoiceRequestPacket>(OnBarrelChoiceRequest)
             .SetMessageHandler<GrindingOverloadsPacket>(OnGrindingOverloads);
         _choiceDialog = new PolymorphChoiceDialog(api);
         if (_harmony != null)
@@ -143,9 +147,12 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
             .RegisterMessageType<QuernChoicePacket>()
             .RegisterMessageType<GrindingOverloadsPacket>()
             .RegisterMessageType<CookingChoicePacket>()
+            .RegisterMessageType<BarrelChoicePacket>()
+            .RegisterMessageType<BarrelChoiceRequestPacket>()
             .SetMessageHandler<SelectRecipePacket>(OnRecipeSelected)
             .SetMessageHandler<QuernChoicePacket>(QuernChoices.OnChoicePacket)
-            .SetMessageHandler<CookingChoicePacket>(CookingChoices.OnChoicePacket);
+            .SetMessageHandler<CookingChoicePacket>(CookingChoices.OnChoicePacket)
+            .SetMessageHandler<BarrelChoicePacket>(BarrelChoices.OnChoicePacket);
         api.Event.PlayerNowPlaying += SendGrindingOverloads;
         api.Event.PlayerNowPlaying += SendDenyList;
         api.ChatCommands
@@ -209,16 +216,16 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
         return _choiceDialog?.IsOpened() == true && _choiceDialog.Owner == owner;
     }
 
-    public void RefreshChoicesFor(object owner, IReadOnlyList<ItemStack?> outputs, int active, Action<int> onSelected)
+    public void RefreshChoicesFor(object owner, IReadOnlyList<ItemStack?> outputs, int active, Action<int> onSelected, IReadOnlyList<string?>? labels = null, IReadOnlyList<string?>? notes = null)
     {
         if (ChoicesOpenFor(owner))
         {
-            _choiceDialog!.Refresh(outputs, active, onSelected);
+            _choiceDialog!.Refresh(outputs, active, onSelected, labels, notes);
         }
     }
 
     // Opens the result panel beside a choice button, or closes it when it is already open.
-    public void ToggleChoiceDialog(double renderX, double renderY, double outerWidth, double outerHeight, IReadOnlyList<ItemStack?> outputs, int active, Action<int> onSelected, object owner, bool below = false)
+    public void ToggleChoiceDialog(double renderX, double renderY, double outerWidth, double outerHeight, IReadOnlyList<ItemStack?> outputs, int active, Action<int> onSelected, object owner, bool below = false, bool standalone = false, string? caption = null, IReadOnlyList<string?>? labels = null, IReadOnlyList<string?>? notes = null)
     {
         if (_choiceDialog == null)
         {
@@ -236,7 +243,7 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
             return;
         }
 
-        _choiceDialog.Open(renderX, renderY, outerWidth, outerHeight, outputs, active, onSelected, owner, below);
+        _choiceDialog.Open(renderX, renderY, outerWidth, outerHeight, outputs, active, onSelected, owner, below, standalone, caption, labels, notes);
     }
 
     public void SendQuernChoice(BlockPos pos, string key)
@@ -247,6 +254,40 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
     public void SendCookingChoice(BlockPos pos, string key)
     {
         _clientChannel?.SendPacket(new CookingChoicePacket { X = pos.X, Y = pos.Y, Z = pos.Z, Dimension = pos.dimension, Key = key });
+    }
+
+    public void SendBarrelChoice(BlockPos pos, string key)
+    {
+        _clientChannel?.SendPacket(new BarrelChoicePacket { X = pos.X, Y = pos.Y, Z = pos.Z, Dimension = pos.dimension, Key = key });
+    }
+
+    private readonly Dictionary<(string Player, BlockPos Pos), long> _barrelAsked = new();
+
+    // One pour changes the barrel more than once, so a player is asked at most once a second per barrel.
+    public void AskBarrelChoice(IServerPlayer player, BlockPos pos)
+    {
+        if (_serverApi == null)
+        {
+            return;
+        }
+
+        long now = _serverApi.World.ElapsedMilliseconds;
+        (string, BlockPos) key = (player.PlayerUID, pos.Copy());
+        if (_barrelAsked.TryGetValue(key, out long last) && now - last < 1000)
+        {
+            return;
+        }
+
+        _barrelAsked[key] = now;
+        _serverChannel?.SendPacket(new BarrelChoiceRequestPacket { X = pos.X, Y = pos.Y, Z = pos.Z, Dimension = pos.dimension }, player);
+    }
+
+    private void OnBarrelChoiceRequest(BarrelChoiceRequestPacket packet)
+    {
+        if (_clientApi != null)
+        {
+            BarrelChoiceSource.Ask(_clientApi, new BlockPos(packet.X, packet.Y, packet.Z, packet.Dimension));
+        }
     }
 
     // Runs after the game's search has set its match, if any.
@@ -483,7 +524,7 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
         (List<string> accepted, List<string> invalid) = ScanDenyEntries(api, config.Deny);
         foreach (string entry in invalid)
         {
-            api.Logger.Warning("Polymorph denylist entry does not match a grid recipe, quern result or cooking recipe: {0}", entry);
+            api.Logger.Warning("Polymorph denylist entry does not match a grid recipe, quern result, cooking recipe or barrel recipe: {0}", entry);
         }
 
         ReplaceDenied(accepted.ToArray());
@@ -535,6 +576,11 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
             return CookingConflicts.IsKnown(api, entry);
         }
 
+        if (entry.StartsWith(BarrelConflicts.DenyPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return BarrelConflicts.IsKnown(api, entry);
+        }
+
         foreach (GridRecipe recipe in api.World.GridRecipes)
         {
             if (EntryDenies(entry, recipe))
@@ -581,7 +627,7 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
             return TextCommandResult.Success(message);
         }
 
-        return TextCommandResult.Success(message + " No matching grid recipe, quern result or cooking recipe for: " + string.Join(", ", invalid));
+        return TextCommandResult.Success(message + " No matching grid recipe, quern result, cooking recipe or barrel recipe for: " + string.Join(", ", invalid));
     }
 
     private TextCommandResult CheckDenySyntax(ICoreServerAPI api)
@@ -604,11 +650,11 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
         (List<string> accepted, List<string> invalid) = ScanDenyEntries(api, config.Deny);
         if (invalid.Count == 0)
         {
-            return TextCommandResult.Success("Denylist is ok. " + accepted.Count + " entries match a grid recipe, quern result or cooking recipe. The list was not changed.");
+            return TextCommandResult.Success("Denylist is ok. " + accepted.Count + " entries match a grid recipe, quern result, cooking recipe or barrel recipe. The list was not changed.");
         }
 
         return TextCommandResult.Success(
-            "Denylist was not changed. " + invalid.Count + " entries do not match a grid recipe, quern result or cooking recipe: " + string.Join(", ", invalid));
+            "Denylist was not changed. " + invalid.Count + " entries do not match a grid recipe, quern result, cooking recipe or barrel recipe: " + string.Join(", ", invalid));
     }
 
     private void SendDenyList(IServerPlayer player)
@@ -655,6 +701,7 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
         {
             GrindingHandbook.ReloadOpenPages(_clientApi);
             CookingChoices.RedrawOpenDialogs(_clientApi);
+            BarrelChoices.RefreshOpenDialogs(_clientApi);
         }
     }
 
@@ -698,6 +745,12 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
     public bool IsDenied(CookingRecipe recipe)
     {
         return _denied.Count > 0 && _denied.Contains(CookingConflicts.DenyId(recipe));
+    }
+
+    // barrel:<recipe code>
+    public bool IsDenied(BarrelRecipe recipe)
+    {
+        return _denied.Count > 0 && _denied.Contains(BarrelConflicts.DenyId(recipe));
     }
 
     public bool IsDenied(CollectibleObject input, GrindingProperties option)
@@ -815,8 +868,11 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
                 .OrderBy(grindable => grindable.Input.Code.ToString(), StringComparer.Ordinal)
                 .ToList();
             List<(string Pot, List<CookingRecipe> Recipes)> pots = CookingConflicts.Groups(api);
-            File.WriteAllText(path, ConflictReport(groups) + QuernReport(querns) + Environment.NewLine + CookingConflicts.Report(pots, IsDenied));
-            return TextCommandResult.Success("Wrote " + groups.Count + " grid, " + querns.Count + " quern and " + pots.Count + " cooking conflict groups to " + path);
+            List<(string Contents, List<BarrelRecipe> Recipes)> barrels = BarrelConflicts.Groups(api);
+            File.WriteAllText(path, ConflictReport(groups) + QuernReport(querns) + Environment.NewLine + CookingConflicts.Report(pots, IsDenied)
+                + Environment.NewLine + BarrelConflicts.Report(barrels, IsDenied));
+            return TextCommandResult.Success("Wrote " + groups.Count + " grid, " + querns.Count + " quern, " + pots.Count + " cooking and "
+                + barrels.Count + " barrel conflict groups to " + path);
         }
         catch (Exception exception)
         {
@@ -1149,7 +1205,8 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
         report.AppendLine("  \"Deny\": [");
         report.AppendLine("    \"doublerecipetest:recipes/grid/double.json@game:ingot-gold x1\",");
         report.AppendLine("    \"quern:game:flint@game:ingot-gold x1\",");
-        report.AppendLine("    \"cooking:stick-gold\"");
+        report.AppendLine("    \"cooking:stick-gold\",");
+        report.AppendLine("    \"barrel:drygrass-gold\"");
         report.AppendLine("  ]");
         report.AppendLine("}");
         report.AppendLine();

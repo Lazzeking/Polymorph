@@ -1,4 +1,13 @@
-## Version 2.5.0 (unreleased)
+## Version 2.6.0 (unreleased)
+
+- When more than one barrel recipe fits a barrel's contents, a button next to the input slot picks the recipe, and the "Will turn into" text follows it. Sealing locks the choice
+- Each result in the choices says under it whether it is made now or after sealing, and for how long
+- An instant recipe waits for a choice instead of picking the first match. The player who filled the barrel is asked, in the barrel window or, after pouring with a bucket, in a small window of its own
+- Each barrel remembers the recipe chosen for each set of matching recipes until it is destroyed. A player is still asked every time they fill it; automation uses the remembered choice right away
+- The denylist takes barrel recipes as `barrel:<recipe code>`. `/polymorph conflicts`, `syntax` and `reload` handle them
+- Polymorph now covers the crafting grid, the quern, the cooking pot and the barrel. From here on it only gets maintenance and bug fixes
+
+## Version 2.5.0 (2026-10-28)
 
 - When more than one cooking recipe matches a cooking pot, a button in the firepit window picks the recipe. Each firepit remembers its choice, and the "Will make" text follows it
 - The cooking choice can change during the first quarter of cooking, then it is locked until the pot is done

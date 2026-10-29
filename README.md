@@ -47,6 +47,18 @@ A cooking pot on a firepit cooks the first cooking recipe that matches its ingre
 
 Cooking recipes go in the same denylist, written as `cooking:<recipe code>`, for example `"cooking:stick-gold"`. A denied recipe never cooks and does not show in the choices, and if it was the first match the next allowed recipe cooks instead. `/polymorph conflicts` lists pots that more than one recipe can cook, with the deny line for each recipe. It tries a few ingredient combinations per recipe, so a conflict between rarer combinations can be missing. `/polymorph syntax` and `/polymorph reload` check cooking lines too.
 
+## Barrel
+
+A barrel uses the first barrel recipe that fits its contents: a sealed recipe waits for you to seal the barrel, an instant one is made right away. When more than one recipe fits, a button next to the input slot lets you pick which one that barrel makes, and the "Will turn into" text follows your choice. Each result in the choices says under it whether it is made now or after sealing, and for how long. Once the barrel is sealed the choice is locked.
+
+An instant recipe does not pick for you. The player who filled the barrel is asked to choose: in the barrel window, or, after pouring with a bucket without opening it, in a small window of its own. Each barrel remembers the recipe chosen for each set of matching recipes until it is destroyed. A player filling it is still asked every time, with the remembered one marked, while automation such as a hopper uses the remembered choice right away. A barrel nobody has chosen for yet waits and says so in its window.
+
+Barrel recipes go in the same denylist, written as `barrel:<recipe code>`, for example `"barrel:drygrass-gold"`. A denied recipe never makes anything and does not show in the choices; if only one recipe is left, the barrel uses it as it normally would. `/polymorph conflicts` lists barrel contents that more than one recipe fits, with the deny line for each recipe, and `/polymorph syntax` and `/polymorph reload` check barrel lines too.
+
+## Status
+
+Polymorph covers the crafting grid, the quern, the cooking pot and the barrel, and is feature complete. It only gets maintenance and bug fixes from here on.
+
 ## Prior work
 
 This started from two other mods.

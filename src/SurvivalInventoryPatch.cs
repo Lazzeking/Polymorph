@@ -171,13 +171,23 @@ public sealed class PolymorphChoiceButton : GuiElementTextButton
     }
 
     // Adds the button and its hover text, which only shows while the button does.
-    public static void AddTo(GuiComposer composer, ICoreClientAPI capi, ElementBounds bounds, IPolymorphChoices choices)
+    public static PolymorphChoiceButton AddTo(GuiComposer composer, ICoreClientAPI capi, ElementBounds bounds, IPolymorphChoices choices)
     {
         var button = new PolymorphChoiceButton(capi, bounds, choices);
         composer.AddInteractiveElement(button, "polymorphChoices");
         composer.AddHoverText(Lang.Get("polymorph:change-result"), CairoFont.WhiteSmallText(), 200, bounds.FlatCopy(), "polymorphChoicesHover");
         button._hover = composer.GetHoverText("polymorphChoicesHover");
         button._hover?.SetAutoWidth(true);
+        return button;
+    }
+
+    // Opens the result panel as a click on the button would, for example when the server asks for a choice.
+    public void OpenChoices()
+    {
+        if (Clickable)
+        {
+            _choices.ToggleChoices(Bounds.renderX, Bounds.renderY, Bounds.OuterWidth, Bounds.OuterHeight);
+        }
     }
 
     // The progress arrow between an input and an output slot ends about 32 below the top of the slots.

@@ -1,0 +1,36 @@
+[
+  {
+    "code": "stick-copper",
+    "sealHours": 1,
+    "ingredients": [
+      { "type": "item", "code": "game:waterportion", "litres": 1 },
+      { "type": "item", "code": "game:stick", "quantity": 1 }
+    ],
+    "output": { "type": "item", "code": "game:ingot-copper", "quantity": 1 }
+  },
+  {
+    "code": "stick-gold",
+    "sealHours": 1,
+    "ingredients": [
+      { "type": "item", "code": "game:waterportion", "litres": 1 },
+      { "type": "item", "code": "game:stick", "quantity": 1 }
+    ],
+    "output": { "type": "item", "code": "game:ingot-gold", "quantity": 1 }
+  },
+  {
+    "code": "drygrass-copper",
+    "ingredients": [
+      { "type": "item", "code": "game:waterportion", "litres": 1 },
+      { "type": "item", "code": "game:drygrass", "quantity": 1 }
+    ],
+    "output": { "type": "item", "code": "game:ingot-copper", "quantity": 1 }
+  },
+  {
+    "code": "drygrass-gold",
+    "ingredients": [
+      { "type": "item", "code": "game:waterportion", "litres": 1 },
+      { "type": "item", "code": "game:drygrass", "quantity": 1 }
+    ],
+    "output": { "type": "item", "code": "game:ingot-gold", "quantity": 1 }
+  }
+]

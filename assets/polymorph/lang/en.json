@@ -2,5 +2,10 @@
 	"change-result": "Change result",
 	"result-locked": "Result is set until this item is ground",
 	"result-locked-cooking": "Recipe is set until this is cooked",
+	"barrel-choose": "More than one recipe fits. Choose what this barrel makes.",
+	"choose-result": "These ingredients can make more than one thing. Choose one:",
+	"barrel-now": "Now",
+	"barrel-now-note": "Made right away",
+	"barrel-sealed-note": "After {0} of sealing",
 	"ground-into-more": "When ground: Turns into {0}x {1} and {2} more"
 }
