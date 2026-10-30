@@ -27,9 +27,6 @@ public static class QuernChoices
     // The handbook patches go apart again, so a handbook another mod changed does not cost the quern its choices.
     public const string HandbookPatchCategory = "polymorph-quern-handbook";
 
-    // Share of an item's grinding time during which its result can still change.
-    public const float SwitchWindow = 0.25f;
-
     private static ConditionalWeakTable<CollectibleObject, GrindingProperties[]> Extras = new();
     private static readonly ConditionalWeakTable<BlockEntityQuern, QuernState> States = new();
 
@@ -41,6 +38,12 @@ public static class QuernChoices
         if (stack != null && mod != null)
         {
             options.RemoveAll(option => mod.IsDenied(stack.Collectible, option));
+
+            // With quern choices turned off, the item grinds into its own result, as in vanilla.
+            if (!mod.Settings.Quern && options.Count > 1)
+            {
+                options.RemoveRange(1, options.Count - 1);
+            }
         }
 
         return options;
@@ -119,7 +122,7 @@ public static class QuernChoices
     // Past the early part of grinding the current item, its result is set.
     public static bool Locked(BlockEntityQuern quern)
     {
-        return quern.inputGrindTime > quern.maxGrindingTime() * SwitchWindow;
+        return quern.inputGrindTime > quern.maxGrindingTime() * PolymorphMod.SettingsOf(quern.Api).QuernSwitchPercent / 100f;
     }
 
     public static void OnChoicePacket(IServerPlayer player, QuernChoicePacket packet)

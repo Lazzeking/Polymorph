@@ -25,12 +25,6 @@ public static class BarrelChoices
     // The barrel patches are applied apart from the others, so a failure here leaves the rest working.
     public const string PatchCategory = "polymorph-barrel";
 
-    // How near a player has to be to choose for a barrel they are not looking into.
-    private const double ChooseRange = 8;
-
-    // After a player is asked, automation waits this long before using the remembered choice, so it cannot craft first.
-    private const long AskHoldMs = 30000;
-
     private static readonly ConditionalWeakTable<BlockEntityBarrel, BarrelState> States = new();
 
     private static readonly AccessTools.FieldRef<BlockEntityBarrel, bool> IgnoreChange = AccessTools.FieldRefAccess<BlockEntityBarrel, bool>("ignoreChange");
@@ -65,6 +59,12 @@ public static class BarrelChoices
             {
                 matches.Add((recipe, outSize));
             }
+        }
+
+        // With barrel choices turned off, the barrel uses its first match, as in vanilla.
+        if (mod != null && !mod.Settings.Barrel && matches.Count > 1)
+        {
+            matches.RemoveRange(1, matches.Count - 1);
         }
 
         return matches;
@@ -133,7 +133,11 @@ public static class BarrelChoices
             IPlayer? asker = byPlayer ?? _actor;
             long now = barrel.Api.World.ElapsedMilliseconds;
             bool instant = index >= 0 && matches[index].Recipe.SealHours <= 0;
-            wait = index < 0 || (instant && !_confirmed && (asker != null || now - state.AskedAt < AskHoldMs));
+            // A player is asked each time unless the server turned that off. After asking, automation waits before using
+            // the remembered choice, so it cannot craft first.
+            PolymorphConfig settings = PolymorphMod.SettingsOf(barrel.Api);
+            long hold = settings.BarrelAutomationWaitSeconds * 1000L;
+            wait = index < 0 || (instant && !_confirmed && ((asker != null && settings.BarrelAskEveryTime) || now - state.AskedAt < hold));
             if (wait && asker is IServerPlayer player)
             {
                 state.AskedAt = now;
@@ -189,7 +193,7 @@ public static class BarrelChoices
 
         // A player may choose for a barrel they could use themselves, from close by.
         if (!player.Entity.World.Claims.TryAccess(player, pos, EnumBlockAccessFlags.Use)
-            || player.Entity.Pos.DistanceTo(pos.ToVec3d().Add(0.5, 0.5, 0.5)) > ChooseRange)
+            || player.Entity.Pos.DistanceTo(pos.ToVec3d().Add(0.5, 0.5, 0.5)) > PolymorphMod.SettingsOf(player.Entity.Api).BarrelChooseRange)
         {
             return;
         }
@@ -552,9 +556,14 @@ internal sealed class BarrelChoiceSource : IPolymorphChoices
     // The same wording the barrel window uses for its seal time.
     private static string SealTime(ICoreClientAPI capi, BarrelRecipe recipe)
     {
-        return recipe.SealHours > 24
-            ? Vintagestory.API.Config.Lang.Get("{0} days", Math.Round(recipe.SealHours / capi.World.Calendar.HoursPerDay, 1))
-            : Vintagestory.API.Config.Lang.Get("{0} hours", recipe.SealHours);
+        return SealTime(capi, recipe.SealHours);
+    }
+
+    internal static string SealTime(ICoreClientAPI capi, double hours)
+    {
+        return hours > 24
+            ? Vintagestory.API.Config.Lang.Get("{0} days", Math.Round(hours / capi.World.Calendar.HoursPerDay, 1))
+            : Vintagestory.API.Config.Lang.Get("{0} hours", hours);
     }
 
     private static ItemStack? Output(BarrelRecipe recipe, int outSize)
@@ -592,9 +601,10 @@ public static class BarrelConflicts
         return api.GetBarrelRecipes()?.Any(recipe => DenyId(recipe).Equals(entry, StringComparison.OrdinalIgnoreCase)) == true;
     }
 
-    public static List<(string Contents, List<BarrelRecipe> Recipes)> Groups(ICoreServerAPI api)
+    // Each barrel content found, as a label and as its two slots (items, liquid), with the recipes it fits.
+    public static List<(string Contents, ItemStack?[] Slots, List<BarrelRecipe> Recipes)> Groups(ICoreServerAPI api)
     {
-        var groups = new List<(string, List<BarrelRecipe>)>();
+        var groups = new List<(string, ItemStack?[], List<BarrelRecipe>)>();
         List<BarrelRecipe> recipes = api.GetBarrelRecipes()?.Where(recipe => recipe.Enabled && recipe.Ingredients != null).ToList() ?? new List<BarrelRecipe>();
         var inventory = new InventoryGeneric(2, "polymorph-barrel-probe", api);
         ItemSlot[] slots = { inventory[0], inventory[1] };
@@ -613,7 +623,7 @@ public static class BarrelConflicts
                 hits.Sort((left, right) => string.Compare(BarrelChoices.Key(left), BarrelChoices.Key(right), StringComparison.Ordinal));
                 if (seen.Add(string.Join("|", hits.Select(BarrelChoices.Key))))
                 {
-                    groups.Add((Label(slots), hits));
+                    groups.Add((Label(slots), new[] { slots[0].Itemstack?.Clone(), slots[1].Itemstack?.Clone() }, hits));
                 }
             }
         }
@@ -624,7 +634,7 @@ public static class BarrelConflicts
         return groups;
     }
 
-    public static string Report(List<(string Contents, List<BarrelRecipe> Recipes)> groups, System.Func<BarrelRecipe, bool> isDenied)
+    public static string Report(List<(string Contents, ItemStack?[] Slots, List<BarrelRecipe> Recipes)> groups, System.Func<BarrelRecipe, bool> isDenied)
     {
         var report = new System.Text.StringBuilder();
         report.AppendLine("Barrel");
@@ -641,7 +651,7 @@ public static class BarrelConflicts
 
         for (int index = 0; index < groups.Count; index++)
         {
-            (string contents, List<BarrelRecipe> recipes) = groups[index];
+            (string contents, _, List<BarrelRecipe> recipes) = groups[index];
             report.Append(index + 1).Append(". ").AppendLine(contents);
             report.AppendLine("  These contents can make:");
             foreach (BarrelRecipe recipe in recipes)

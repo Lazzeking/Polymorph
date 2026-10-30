@@ -2,7 +2,7 @@
 	"type": "Code",
 	"name": "Polymorph",
 	"modid": "polymorph",
-	"version": "2.6.0",
+	"version": "3.0.0",
 	"description": "Choose which recipe the crafting grid, quern, cooking pot and barrel use when several match.",
 	"authors": [
 		"Lazzeking",

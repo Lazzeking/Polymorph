@@ -324,11 +324,51 @@ internal sealed class ChoiceSlot : ItemSlot
     {
     }
 
+    // A little narrower than the tooltip's text column, which is about 288 wide.
+    private const double NoteWidth = 240;
+
+    private static readonly char[] Breaks = { '@', '+', '/', ':', '-' };
+
     public string? Note { get; set; }
 
     public override string GetStackDescription(IClientWorldAccessor world, bool extendedDebugInfo)
     {
         string description = base.GetStackDescription(world, extendedDebugInfo);
-        return Note == null ? description : Note + "\n" + description;
+        return Note == null ? description : Wrap(Note) + "\n" + description;
+    }
+
+    // The game wraps a tooltip only at spaces, and a word wider than the whole tooltip is cut with an empty line left
+    // behind it. Deny lines have no spaces, so a long one is broken here instead: after an @, +, /, : or -, or anywhere
+    // when there is none.
+    private static string Wrap(string note)
+    {
+        CairoFont font = CairoFont.WhiteSmallText();
+        return string.Join("\n", note.Split('\n').Select(line => string.Join(" ", line.Split(' ').Select(word => WrapWord(font, word)))));
+    }
+
+    private static string WrapWord(CairoFont font, string word)
+    {
+        var parts = new List<string>();
+        while (Width(font, word) > NoteWidth)
+        {
+            int fits = word.Length - 1;
+            while (fits > 1 && Width(font, word[..fits]) > NoteWidth)
+            {
+                fits--;
+            }
+
+            int lastBreak = word.LastIndexOfAny(Breaks, fits - 1);
+            int cut = lastBreak > 0 ? lastBreak + 1 : fits;
+            parts.Add(word[..cut]);
+            word = word[cut..];
+        }
+
+        parts.Add(word);
+        return string.Join("\n", parts);
+    }
+
+    private static double Width(CairoFont font, string text)
+    {
+        return font.GetTextExtents(text).Width / RuntimeEnv.GUIScale;
     }
 }

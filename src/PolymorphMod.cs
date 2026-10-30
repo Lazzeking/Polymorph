@@ -9,6 +9,7 @@ using HarmonyLib;
 using ProtoBuf;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
+using Vintagestory.API.Config;
 using Vintagestory.API.MathTools;
 using Vintagestory.API.Server;
 using Vintagestory.Common;
@@ -16,7 +17,7 @@ using Vintagestory.GameContent;
 
 namespace Polymorph;
 
-public class PolymorphMod : ModSystem, IPolymorphChoices
+public partial class PolymorphMod : ModSystem, IPolymorphChoices
 {
     public const string IconPath = "textures/gui/cycle.svg";
     public const string ConfigFile = "polymorph.json";
@@ -48,6 +49,26 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
     public static PolymorphMod? Of(ICoreAPI api)
     {
         return Instances.TryGetValue(api, out PolymorphMod? mod) ? mod : null;
+    }
+
+    // The settings this side uses: the server reads them from polymorph.json (and ConfigKit when installed), players get
+    // the server's values with the denylist.
+    public PolymorphConfig Settings { get; } = new();
+
+    public static PolymorphConfig SettingsOf(ICoreAPI? api)
+    {
+        return (api == null ? null : Of(api))?.Settings ?? Defaults;
+    }
+
+    private static readonly PolymorphConfig Defaults = new();
+
+    private long _settingsCallback;
+
+    // ConfigKit reads its configs in AssetsLoaded, so they register here.
+    public override void StartPre(ICoreAPI api)
+    {
+        Instances.AddOrUpdate(api, this);
+        ConfigKitBridge.Register(api, Settings, ConfigFile, OnSettingsSynced, code => OnSettingChanged(api));
     }
 
     public override void Start(ICoreAPI api)
@@ -120,10 +141,16 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
             .RegisterMessageType<CookingChoicePacket>()
             .RegisterMessageType<BarrelChoicePacket>()
             .RegisterMessageType<BarrelChoiceRequestPacket>()
+            .RegisterMessageType<ConflictsPacket>()
+            .RegisterMessageType<ConflictEditPacket>()
+            .RegisterMessageType<ConflictsRequestPacket>()
+            .RegisterMessageType<SettingsEditPacket>()
             .SetMessageHandler<DenyListPacket>(OnDenyList)
             .SetMessageHandler<BarrelChoiceRequestPacket>(OnBarrelChoiceRequest)
+            .SetMessageHandler<ConflictsPacket>(OnConflicts)
             .SetMessageHandler<GrindingOverloadsPacket>(OnGrindingOverloads);
         _choiceDialog = new PolymorphChoiceDialog(api);
+        RegisterConflictsHotkey(api);
         if (_harmony != null)
         {
             SurvivalInventoryPatch.PatchReplacedWindows(_harmony, api);
@@ -149,10 +176,17 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
             .RegisterMessageType<CookingChoicePacket>()
             .RegisterMessageType<BarrelChoicePacket>()
             .RegisterMessageType<BarrelChoiceRequestPacket>()
+            .RegisterMessageType<ConflictsPacket>()
+            .RegisterMessageType<ConflictEditPacket>()
+            .RegisterMessageType<ConflictsRequestPacket>()
+            .RegisterMessageType<SettingsEditPacket>()
             .SetMessageHandler<SelectRecipePacket>(OnRecipeSelected)
             .SetMessageHandler<QuernChoicePacket>(QuernChoices.OnChoicePacket)
             .SetMessageHandler<CookingChoicePacket>(CookingChoices.OnChoicePacket)
-            .SetMessageHandler<BarrelChoicePacket>(BarrelChoices.OnChoicePacket);
+            .SetMessageHandler<BarrelChoicePacket>(BarrelChoices.OnChoicePacket)
+            .SetMessageHandler<ConflictEditPacket>(OnConflictEdit)
+            .SetMessageHandler<ConflictsRequestPacket>(OnConflictsRequest)
+            .SetMessageHandler<SettingsEditPacket>(OnSettingsEdit);
         api.Event.PlayerNowPlaying += SendGrindingOverloads;
         api.Event.PlayerNowPlaying += SendDenyList;
         api.ChatCommands
@@ -160,14 +194,19 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
             .WithDescription("Writes crafting conflicts and reloads the denylist.")
             .RequiresPrivilege(Privilege.controlserver)
             .BeginSubCommand("conflicts")
-                .WithDescription("Write a file of crafting grids that can make more than one item.")
+                .WithDescription("Find everything that can make more than one result again, write it to a file, and open the conflicts screen.")
                 .RequiresPrivilege(Privilege.controlserver)
-                .HandleWith(_ => WriteConflicts(api))
+                .HandleWith(args => WriteConflicts(api, args.Caller.Player as IServerPlayer))
+            .EndSubCommand()
+            .BeginSubCommand("screen")
+                .WithDescription("Open the conflicts screen with the conflicts found last, looking again only if the denylist changed since.")
+                .RequiresPrivilege(Privilege.controlserver)
+                .HandleWith(args => OpenConflictsScreen(api, args.Caller.Player as IServerPlayer))
             .EndSubCommand()
             .BeginSubCommand("reload")
                 .WithDescription("Read the denylist again, report unknown recipes, and send it to connected players.")
                 .RequiresPrivilege(Privilege.controlserver)
-                .HandleWith(_ => ReloadDenyList(api))
+                .HandleWith(args => ReloadDenyList(api, args.Caller.Player as IServerPlayer))
             .EndSubCommand()
             .BeginSubCommand("syntax")
                 .WithDescription("Check the denylist file without changing it.")
@@ -178,6 +217,7 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
 
     public override void Dispose()
     {
+        _disposed = true;
         if (_serverApi != null && _saveGameLoaded != null)
         {
             _serverApi.Event.SaveGameLoaded -= _saveGameLoaded;
@@ -321,6 +361,14 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
             matches.Insert(0, found);
         }
 
+        DropReachableElsewhere(matches, slots, found, grid.Api.World, player);
+
+        // With grid choices turned off, the grid crafts its first match, as in vanilla.
+        if (!mod.Settings.CraftingGrid && matches.Count > 1)
+        {
+            matches.RemoveRange(1, matches.Count - 1);
+        }
+
         if (matches.Count == 0)
         {
             if (found != null)
@@ -451,6 +499,158 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
         CraftingGridAccess.FindMatchingRecipe(grid);
     }
 
+    // Position can decide the result on purpose: a slanted roofing piece makes a different part in each spot of the
+    // grid, and a 1x1 recipe turns it back into stone in any spot the others leave free. A result that the same items
+    // reach in another arrangement, where none of the competing recipes match, is already reachable in vanilla, so it
+    // is not a real conflict and is left out. The recipe the game itself picks here is always kept, so Polymorph never
+    // changes what vanilla makes.
+    private static void DropReachableElsewhere(List<GridRecipe> recipes, ItemSlot[] grid, GridRecipe? gamePick, IWorldAccessor world, IPlayer? player)
+    {
+        if (recipes.Count < 2)
+        {
+            return;
+        }
+
+        ItemStack[] items = grid.Where(slot => slot.Itemstack != null && slot.Itemstack.StackSize > 0).Select(slot => slot.Itemstack!).ToArray();
+        List<GridRecipe> reachable = recipes
+            .Where(recipe => recipe != gamePick && ReachableElsewhere(recipe, items, recipes.Where(other => other != recipe).ToList(), world, player))
+            .ToList();
+        recipes.RemoveAll(reachable.Contains);
+    }
+
+    // What the game's own grid search would make from these slots: candidates from its ingredient index in that order,
+    // the first shaped recipe that matches, otherwise the first shapeless one. Walking the whole index is slow, so each
+    // item's candidates are remembered for the rest of the scan.
+    private static GridRecipe? GamePick(IWorldAccessor world, ItemSlot[] slots, Dictionary<string, List<GridRecipe>> candidatesByItem)
+    {
+        var candidates = new List<GridRecipe>();
+        foreach (ItemSlot slot in slots)
+        {
+            ItemStack? stack = slot.Itemstack;
+            if (stack == null || stack.StackSize <= 0)
+            {
+                continue;
+            }
+
+            string item = stack.Collectible.Code.ToString();
+            if (!candidatesByItem.TryGetValue(item, out List<GridRecipe>? forItem))
+            {
+                forItem = new List<GridRecipe>();
+                foreach (KeyValuePair<IRecipeIngredientBase, List<IRecipeBase>> pair in world.FastSearchRecipesByIngredient)
+                {
+                    if (!pair.Key.SatisfiesAsIngredient(stack, false))
+                    {
+                        continue;
+                    }
+
+                    foreach (IRecipeBase recipe in pair.Value)
+                    {
+                        if (recipe is GridRecipe { Enabled: true } grid && !forItem.Contains(grid))
+                        {
+                            forItem.Add(grid);
+                        }
+                    }
+                }
+
+                candidatesByItem[item] = forItem;
+            }
+
+            foreach (GridRecipe grid in forItem)
+            {
+                if (!candidates.Contains(grid))
+                {
+                    candidates.Add(grid);
+                }
+            }
+        }
+
+        foreach (bool shapeless in new[] { false, true })
+        {
+            foreach (GridRecipe recipe in candidates.Where(candidate => candidate.Shapeless == shapeless))
+            {
+                try
+                {
+                    if (GridMatches(recipe, slots, world, null))
+                    {
+                        return recipe;
+                    }
+                }
+                catch (Exception)
+                {
+                    // A recipe that needs a player trait cannot be tried without one; it counts as not matching here.
+                }
+            }
+        }
+
+        return null;
+    }
+
+    // With a player this is the game's own check, other mods' hooks included. GridRecipe.Matches cannot run without one
+    // (it raises the player's recipe events first), so a scan uses the same shape check without those events.
+    private static bool GridMatches(GridRecipe recipe, ItemSlot[] slots, IWorldAccessor world, IPlayer? player)
+    {
+        if (player != null)
+        {
+            return recipe.Matches(player, world, slots, 3);
+        }
+
+        IRecipeIngredient?[]? ingredients = recipe.ResolvedIngredients;
+        if (ingredients == null || recipe.Width <= 0 || recipe.Height <= 0 || recipe.Width > 3 || recipe.Height > 3)
+        {
+            return false;
+        }
+
+        if (recipe.Shapeless)
+        {
+            return (bool)ShapeLessMethod.Invoke(recipe, new object[] { slots, world, ingredients })!;
+        }
+
+        for (int column = 0; column <= 3 - recipe.Width; column++)
+        {
+            for (int row = 0; row <= 3 - recipe.Height; row++)
+            {
+                if ((bool)AtPositionMethod.Invoke(recipe, new object[] { column, row, slots, 3, recipe.Width, ingredients })!)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    // Tries the items in a row from every starting cell of an empty 3x3 grid.
+    private static bool ReachableElsewhere(GridRecipe recipe, ItemStack[] items, List<GridRecipe> others, IWorldAccessor world, IPlayer? player)
+    {
+        if (items.Length == 0 || items.Length > 9)
+        {
+            return false;
+        }
+
+        ItemSlot[] slots = Enumerable.Range(0, 9).Select(_ => (ItemSlot)new DummySlot()).ToArray();
+        for (int start = 0; start + items.Length <= 9; start++)
+        {
+            for (int i = 0; i < slots.Length; i++)
+            {
+                slots[i].Itemstack = i >= start && i < start + items.Length ? items[i - start].Clone() : null;
+            }
+
+            try
+            {
+                if (GridMatches(recipe, slots, world, player) && !others.Any(other => GridMatches(other, slots, world, player)))
+                {
+                    return true;
+                }
+            }
+            catch (Exception)
+            {
+                // A recipe that needs a player trait cannot be tried without one; it counts as not matching here.
+            }
+        }
+
+        return false;
+    }
+
     private static List<GridRecipe> FindMatches(PolymorphMod mod, InventoryCraftingGrid grid, ItemSlot[] slots, int gridSize, IPlayer? player)
     {
         var candidates = new List<GridRecipe>();
@@ -521,14 +721,62 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
             api.StoreModConfig(config, ConfigFile);
         }
 
-        (List<string> accepted, List<string> invalid) = ScanDenyEntries(api, config.Deny);
+        Settings.CopySettingsFrom(config);
+        Settings.Deny = config.Deny ?? Array.Empty<string>();
+        return ApplyDenyList(api);
+    }
+
+    // Checks the denylist in Settings and uses the lines that match something.
+    private List<string> ApplyDenyList(ICoreServerAPI api)
+    {
+        (List<string> accepted, List<string> invalid) = ScanDenyEntries(api, Settings.Deny);
         foreach (string entry in invalid)
         {
             api.Logger.Warning("Polymorph denylist entry does not match a grid recipe, quern result, cooking recipe or barrel recipe: {0}", entry);
         }
 
         ReplaceDenied(accepted.ToArray());
+
+        UpdateConflicts(api);
         return invalid;
+    }
+
+    // ConfigKit has already put the new value in Settings. A text field reports every keystroke, so the server waits
+    // half a second after the last change, then applies and sends everything once. Players only get the server's values.
+    private void OnSettingChanged(ICoreAPI api)
+    {
+        if (api is not ICoreServerAPI serverApi)
+        {
+            return;
+        }
+
+        serverApi.Event.UnregisterCallback(_settingsCallback);
+        _settingsCallback = serverApi.Event.RegisterCallback(_ =>
+        {
+            ApplyDenyList(serverApi);
+            SendToEveryone(serverApi);
+        }, 500);
+    }
+
+    private void OnSettingsSynced()
+    {
+        RefreshClient();
+    }
+
+    private int SendToEveryone(ICoreServerAPI api)
+    {
+        int players = 0;
+        foreach (IPlayer player in api.World.AllOnlinePlayers)
+        {
+            if (player is IServerPlayer serverPlayer)
+            {
+                SendDenyList(serverPlayer);
+                Rerun(serverPlayer);
+                players++;
+            }
+        }
+
+        return players;
     }
 
     private static (List<string> Accepted, List<string> Invalid) ScanDenyEntries(ICoreServerAPI api, string[]? names)
@@ -605,21 +853,11 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
         return false;
     }
 
-    private TextCommandResult ReloadDenyList(ICoreServerAPI api)
+    private TextCommandResult ReloadDenyList(ICoreServerAPI api, IServerPlayer? player)
     {
+        Working(player, "polymorph:command-reloading");
         List<string> invalid = LoadDenyList(api);
-        int players = 0;
-        foreach (IPlayer player in api.World.AllOnlinePlayers)
-        {
-            if (player is not IServerPlayer serverPlayer)
-            {
-                continue;
-            }
-
-            SendDenyList(serverPlayer);
-            Rerun(serverPlayer);
-            players++;
-        }
+        int players = SendToEveryone(api);
 
         string message = "Reloaded " + _denied.Count + " denied results for " + players + " connected players.";
         if (invalid.Count == 0)
@@ -659,7 +897,7 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
 
     private void SendDenyList(IServerPlayer player)
     {
-        _serverChannel?.SendPacket(new DenyListPacket { Names = _denied.ToArray() }, player);
+        _serverChannel?.SendPacket(new DenyListPacket { Names = _denied.ToArray(), Settings = Settings }, player);
     }
 
     // Item types come from the server, so the quern results it kept from mod patches come along with them.
@@ -686,6 +924,19 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
     private void OnDenyList(DenyListPacket packet)
     {
         ReplaceDenied(packet.Names);
+        if (packet.Settings != null)
+        {
+            Settings.CopySettingsFrom(packet.Settings);
+        }
+
+        RefreshClient();
+    }
+
+    // Everything on screen that depends on the denylist or the settings shows them again.
+    private void RefreshClient()
+    {
+        _conflictsDialog?.ApplyDenylist(_denied);
+        _settingsDialog?.ApplySettings(Settings);
         IPlayer? player = _clientApi?.World.Player;
         if (player != null)
         {
@@ -745,6 +996,12 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
     public bool IsDenied(CookingRecipe recipe)
     {
         return _denied.Count > 0 && _denied.Contains(CookingConflicts.DenyId(recipe));
+    }
+
+    // cooking:<recipe>, or cooking:<recipe>@<items> for a pot holding exactly those items.
+    public bool IsDenied(CookingRecipe recipe, ItemStack[] stacks)
+    {
+        return _denied.Count > 0 && (_denied.Contains(CookingConflicts.DenyId(recipe)) || _denied.Contains(CookingConflicts.DenyId(recipe, stacks)));
     }
 
     // barrel:<recipe code>
@@ -856,28 +1113,20 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
         yield return path + "@" + code;
     }
 
-    private TextCommandResult WriteConflicts(ICoreServerAPI api)
+    // Said in chat before a command starts work that can take a while in a large modpack, so the player knows it is
+    // running. The console gets the result line only.
+    private static void Working(IServerPlayer? player, string langKey)
     {
-        try
-        {
-            string folder = api.GetOrCreateDataPath("ModConfig");
-            string path = Path.Combine(folder, ConflictsFile);
-            List<ConflictGroup> groups = ConflictGroups(api);
-            List<(CollectibleObject Input, List<GrindingProperties> Options)> querns = Grindables(api)
-                .Where(grindable => grindable.Options.Count > 1)
-                .OrderBy(grindable => grindable.Input.Code.ToString(), StringComparer.Ordinal)
-                .ToList();
-            List<(string Pot, List<CookingRecipe> Recipes)> pots = CookingConflicts.Groups(api);
-            List<(string Contents, List<BarrelRecipe> Recipes)> barrels = BarrelConflicts.Groups(api);
-            File.WriteAllText(path, ConflictReport(groups) + QuernReport(querns) + Environment.NewLine + CookingConflicts.Report(pots, IsDenied)
-                + Environment.NewLine + BarrelConflicts.Report(barrels, IsDenied));
-            return TextCommandResult.Success("Wrote " + groups.Count + " grid, " + querns.Count + " quern, " + pots.Count + " cooking and "
-                + barrels.Count + " barrel conflict groups to " + path);
-        }
-        catch (Exception exception)
-        {
-            return TextCommandResult.Success("Could not write recipe conflicts: " + exception.Message);
-        }
+        player?.SendMessage(GlobalConstants.GeneralChatGroup, Lang.Get(langKey), EnumChatType.Notification);
+    }
+
+    // Looks for the conflicts again and writes the file. A player who ran the command gets the result in chat and on
+    // the conflicts screen once the search is done; the console gets it in the server log.
+    private TextCommandResult WriteConflicts(ICoreServerAPI api, IServerPlayer? player)
+    {
+        Working(player, "polymorph:command-finding");
+        StartScan(api, player);
+        return TextCommandResult.Success(player == null ? "Polymorph is finding conflicts; the result goes to the server log." : "");
     }
 
     internal static string ArrangementKey(ItemSlot[] slots)
@@ -933,6 +1182,8 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
 
         var groups = new List<ConflictGroup>();
         var seen = new HashSet<string>();
+        var checkedGrids = new HashSet<string>(StringComparer.Ordinal);
+        var candidatesByItem = new Dictionary<string, List<GridRecipe>>(StringComparer.Ordinal);
         foreach (RecipeScan probe in scans)
         {
             if (!probe.CanProbe || !TryFillGrid(probe, slots))
@@ -992,8 +1243,20 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
                 }
             }
 
-            string grid = GridLabel(slots);
+            // Most grids make one thing. Only real candidates get the costlier checks below, and each grid only once.
             string layout = GridLayout(slots);
+            if (hits.Count < 2 || !checkedGrids.Add(layout))
+            {
+                ClearSlots(slots);
+                continue;
+            }
+
+            // The list keeps one recipe per output, so the game's pick is protected through the entry with its output.
+            GridRecipe? gamePick = GamePick(api.World, slots, candidatesByItem);
+            string? pickOutput = gamePick == null ? null : OutputCode(gamePick);
+            DropReachableElsewhere(hits, slots, hits.FirstOrDefault(hit => pickOutput != null && OutputCode(hit) == pickOutput), api.World, null);
+            string grid = GridLabel(slots);
+            ItemStack?[] cells = slots.Select(slot => slot.Itemstack?.Clone()).ToArray();
             ClearSlots(slots);
             if (hits.Count < 2)
             {
@@ -1003,7 +1266,7 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
             hits.Sort((left, right) => string.Compare(RecipeKey(left), RecipeKey(right), StringComparison.Ordinal));
             if (seen.Add(string.Join("|", hits.Select(RecipeKey))))
             {
-                groups.Add(new ConflictGroup { Grid = grid, Layout = layout, Recipes = hits });
+                groups.Add(new ConflictGroup { Grid = grid, Layout = layout, Recipes = hits, Cells = cells });
             }
         }
 
@@ -1304,6 +1567,9 @@ public class PolymorphMod : ModSystem, IPolymorphChoices
         public string Grid = "";
         public string Layout = "";
         public List<GridRecipe> Recipes = new();
+
+        // The 3x3 grid this group was found with, row by row, empty cells as null.
+        public ItemStack?[] Cells = Array.Empty<ItemStack?>();
     }
 
     private static string RecipeLabel(GridRecipe recipe)
@@ -1357,11 +1623,10 @@ public class DenyListPacket
 {
     [ProtoMember(1)]
     public string[] Names { get; set; } = Array.Empty<string>();
-}
 
-public class PolymorphConfig
-{
-    public string[] Deny = Array.Empty<string>();
+    // The server's other settings, so players see the same stations and timings it uses.
+    [ProtoMember(2)]
+    public PolymorphConfig? Settings { get; set; }
 }
 
 internal static class CraftingGridAccess

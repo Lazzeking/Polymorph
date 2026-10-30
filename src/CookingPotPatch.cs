@@ -23,9 +23,6 @@ public static class CookingChoices
     // The cooking patches are applied apart from the others, so a failure here leaves the rest working.
     public const string PatchCategory = "polymorph-cooking";
 
-    // Share of the cooking time during which the recipe can still change.
-    public const float SwitchWindow = 0.25f;
-
     private static readonly ConditionalWeakTable<BlockEntityFirepit, FirepitState> States = new();
 
     // The firepit whose pot the game is asking about, set while it checks, cooks or describes the pot.
@@ -47,7 +44,7 @@ public static class CookingChoices
         bool dirty = pot.Attributes?["isDirtyPot"].AsBool() == true;
         foreach (CookingRecipe recipe in recipes)
         {
-            if ((dirty && (recipe.CooksInto == null || recipe.IsFood)) || mod?.IsDenied(recipe) == true)
+            if ((dirty && (recipe.CooksInto == null || recipe.IsFood)) || mod?.IsDenied(recipe, stacks) == true)
             {
                 continue;
             }
@@ -57,6 +54,12 @@ public static class CookingChoices
             {
                 matches.Add((recipe, servings));
             }
+        }
+
+        // With cooking choices turned off, the pot cooks its first match, as in vanilla.
+        if (mod != null && !mod.Settings.CookingPot && matches.Count > 1)
+        {
+            matches.RemoveRange(1, matches.Count - 1);
         }
 
         return matches;
@@ -95,7 +98,7 @@ public static class CookingChoices
     // Past the early part of cooking, the recipe is set.
     public static bool Locked(BlockEntityFirepit firepit)
     {
-        return firepit.inputStackCookingTime > firepit.maxCookingTime() * SwitchWindow;
+        return firepit.inputStackCookingTime > firepit.maxCookingTime() * PolymorphMod.SettingsOf(firepit.Api).CookingSwitchPercent / 100f;
     }
 
     // What the pot would hold after cooking this recipe, to show in the result panel: a pot of the meal, or the item it cooks into.
@@ -155,7 +158,7 @@ public static class CookingChoices
             return;
         }
 
-        bool denied = PolymorphMod.Of(world.Api)?.IsDenied(result) == true;
+        bool denied = PolymorphMod.Of(world.Api)?.IsDenied(result, stacks) == true;
         BlockEntityFirepit? firepit = _firepit;
         string? key = firepit == null ? null : ChoiceOf(firepit);
         if (!denied && (key == null || servings <= 0 || Key(result) == key))
@@ -498,19 +501,57 @@ public static class CookingConflicts
     private const int PotSlots = 4;
     private const int ItemsTriedPerIngredient = 6;
 
+    // cooking:<recipe> denies the recipe in every pot.
     public static string DenyId(CookingRecipe recipe)
     {
         return DenyPrefix + CookingChoices.Key(recipe);
     }
 
-    public static bool IsKnown(ICoreServerAPI api, string entry)
+    // cooking:<recipe>@<item>+<item> denies it only for a pot holding exactly those items, however many of each.
+    // One recipe such as soup takes many ingredients, so this denies it for one combination and leaves the others.
+    public static string DenyId(CookingRecipe recipe, ItemStack[] stacks)
     {
-        return api.GetCookingRecipes()?.Any(recipe => DenyId(recipe).Equals(entry, StringComparison.OrdinalIgnoreCase)) == true;
+        return DenyId(recipe) + "@" + Ingredients(stacks);
     }
 
-    public static List<(string Pot, List<CookingRecipe> Recipes)> Groups(ICoreServerAPI api)
+    // The different items in a pot, sorted, so the order they were put in never matters.
+    public static string Ingredients(IEnumerable<ItemStack> stacks)
     {
-        var groups = new List<(string, List<CookingRecipe>)>();
+        return string.Join("+", stacks
+            .Where(stack => stack?.Collectible?.Code != null)
+            .Select(stack => stack.Collectible.Code.ToString())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(code => code, StringComparer.OrdinalIgnoreCase));
+    }
+
+    // A whole-recipe line needs a loaded recipe; a combination line also needs every item it names to exist.
+    public static bool IsKnown(ICoreServerAPI api, string entry)
+    {
+        string body = entry.Substring(DenyPrefix.Length);
+        int at = body.IndexOf('@');
+        string code = at < 0 ? body : body.Substring(0, at);
+        if (api.GetCookingRecipes()?.Any(recipe => CookingChoices.Key(recipe).Equals(code, StringComparison.OrdinalIgnoreCase)) != true)
+        {
+            return false;
+        }
+
+        if (at < 0)
+        {
+            return true;
+        }
+
+        string[] items = body.Substring(at + 1).Split('+', StringSplitOptions.RemoveEmptyEntries);
+        return items.Length > 0 && items.All(item =>
+        {
+            var location = new AssetLocation(item);
+            return api.World.GetItem(location) != null || api.World.GetBlock(location) != null;
+        });
+    }
+
+    // Each pot found, as a label and as the stacks it holds, with the recipes that can cook it.
+    public static List<(string Pot, ItemStack[] Stacks, List<CookingRecipe> Recipes)> Groups(ICoreServerAPI api)
+    {
+        var groups = new List<(string, ItemStack[], List<CookingRecipe>)>();
         List<CookingRecipe> recipes = api.GetCookingRecipes()?.Where(recipe => recipe.Enabled && recipe.Ingredients != null).ToList() ?? new List<CookingRecipe>();
         var wildcards = new Dictionary<string, ItemStack?>(StringComparer.Ordinal);
         var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -527,7 +568,7 @@ public static class CookingConflicts
                 hits.Sort((left, right) => string.Compare(CookingChoices.Key(left), CookingChoices.Key(right), StringComparison.Ordinal));
                 if (seen.Add(string.Join("|", hits.Select(CookingChoices.Key))))
                 {
-                    groups.Add((PotLabel(pot), hits));
+                    groups.Add((PotLabel(pot), pot, hits));
                 }
             }
         }
@@ -536,13 +577,13 @@ public static class CookingConflicts
         return groups;
     }
 
-    public static string Report(List<(string Pot, List<CookingRecipe> Recipes)> groups, System.Func<CookingRecipe, bool> isDenied)
+    public static string Report(List<(string Pot, ItemStack[] Stacks, List<CookingRecipe> Recipes)> groups, System.Func<CookingRecipe, ItemStack[], bool> isDenied)
     {
         var report = new System.Text.StringBuilder();
         report.AppendLine("Cooking");
         report.AppendLine();
         report.AppendLine("Each entry is one pot of ingredients that more than one cooking recipe can cook.");
-        report.AppendLine("The deny lines go in the same Deny list. A denied recipe never cooks and does not show in the choices.");
+        report.AppendLine("The deny lines go in the same Deny list. Each one denies that recipe only for a pot of those ingredients; cooking:<recipe> without the @ part denies it in every pot.");
         report.AppendLine("Only a few ingredient combinations per recipe are tried, so a conflict between rarer combinations can be missing.");
         report.AppendLine();
         if (groups.Count == 0)
@@ -553,19 +594,19 @@ public static class CookingConflicts
 
         for (int index = 0; index < groups.Count; index++)
         {
-            (string pot, List<CookingRecipe> recipes) = groups[index];
+            (string pot, ItemStack[] stacks, List<CookingRecipe> recipes) = groups[index];
             report.Append(index + 1).Append(". ").AppendLine(pot);
             report.AppendLine("  This pot can cook:");
             foreach (CookingRecipe recipe in recipes)
             {
                 report.Append("  ").Append(CookingChoices.Key(recipe)).Append(" (").Append(OutputLabel(recipe)).Append(')');
-                if (isDenied(recipe))
+                if (isDenied(recipe, stacks))
                 {
                     report.Append(" (already denied)");
                 }
 
                 report.AppendLine();
-                report.Append("  deny: \"").Append(DenyId(recipe)).AppendLine("\"");
+                report.Append("  deny: \"").Append(DenyId(recipe, stacks)).AppendLine("\"");
             }
 
             report.AppendLine();
