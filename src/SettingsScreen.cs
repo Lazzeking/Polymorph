@@ -4,20 +4,37 @@ using ProtoBuf;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 using Vintagestory.API.Config;
+using Vintagestory.API.Datastructures;
 using Vintagestory.API.Server;
 
 namespace Polymorph;
 
-// Without ConfigKit the conflicts screen has a Settings button that opens this small screen for everything in
-// polymorph.json but the denylist, which the conflicts screen itself edits. With ConfigKit its own screen does this,
-// so the button is left out and there is one place to change them.
+// Without ConfigKit or Integrated Mod Manager the conflicts screen has a Settings button that opens this small screen
+// for everything in polymorph.json but the denylist, which the conflicts screen itself edits. With either of them
+// their own screen does this, so the button is left out and there is one place to change them.
 public partial class PolymorphMod
 {
     private PolymorphSettingsDialog? _settingsDialog;
 
-    private static bool HasConfigKit(ICoreAPI api)
+    // Integrated Mod Manager builds its own screen for polymorph.json from assets/polymorph/config/imm.json, saves the
+    // file, then says so with this event on the server. Nothing of it is referenced, so it stays optional.
+    private const string ImmSavedEvent = "imm.polymorph";
+
+    // ConfigKit or Integrated Mod Manager already give the settings a screen, so the Settings button is left out.
+    private static bool HasSettingsScreen(ICoreAPI api)
     {
-        return api.ModLoader.IsModEnabled("configkit");
+        return api.ModLoader.IsModEnabled("configkit") || api.ModLoader.IsModEnabled("integratedmodmanager");
+    }
+
+    // An admin saved polymorph.json in Integrated Mod Manager: it is read again and applied for everyone, the same as
+    // /polymorph reload.
+    private void OnImmSaved(string eventName, ref EnumHandling handling, IAttribute data)
+    {
+        if (_serverApi != null)
+        {
+            LoadDenyList(_serverApi);
+            SendToEveryone(_serverApi);
+        }
     }
 
     private void OpenSettings()

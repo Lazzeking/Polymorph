@@ -1,0 +1,23 @@
+{
+	"Configuration": [
+		{
+			"ConfigFile": "polymorph.json",
+			"ConfigLabel": "polymorph:settings-title",
+			"Description": "polymorph:imm-desc",
+			"ConfigSource": "ModConfig",
+			"ConfigSide": "Server",
+			"Settings": [
+				{ "Type": "Boolean", "Label": "polymorph:setting-CraftingGrid", "Description": "polymorph:settingdesc-CraftingGrid", "Map": "CraftingGrid" },
+				{ "Type": "Boolean", "Label": "polymorph:setting-Quern", "Description": "polymorph:settingdesc-Quern", "Map": "Quern" },
+				{ "Type": "Boolean", "Label": "polymorph:setting-CookingPot", "Description": "polymorph:settingdesc-CookingPot", "Map": "CookingPot" },
+				{ "Type": "Boolean", "Label": "polymorph:setting-Barrel", "Description": "polymorph:settingdesc-Barrel", "Map": "Barrel" },
+				{ "Type": "Slider", "Label": "polymorph:setting-QuernSwitchPercent", "Description": "polymorph:settingdesc-QuernSwitchPercent", "Map": "QuernSwitchPercent", "Min": 0, "Max": 100, "Step": 1 },
+				{ "Type": "Slider", "Label": "polymorph:setting-CookingSwitchPercent", "Description": "polymorph:settingdesc-CookingSwitchPercent", "Map": "CookingSwitchPercent", "Min": 0, "Max": 100, "Step": 1 },
+				{ "Type": "Boolean", "Label": "polymorph:setting-BarrelAskEveryTime", "Description": "polymorph:settingdesc-BarrelAskEveryTime", "Map": "BarrelAskEveryTime" },
+				{ "Type": "Slider", "Label": "polymorph:setting-BarrelAutomationWaitSeconds", "Description": "polymorph:settingdesc-BarrelAutomationWaitSeconds", "Map": "BarrelAutomationWaitSeconds", "Min": 0, "Max": 600, "Step": 1 },
+				{ "Type": "Slider", "Label": "polymorph:setting-BarrelChooseRange", "Description": "polymorph:settingdesc-BarrelChooseRange", "Map": "BarrelChooseRange", "Min": 2, "Max": 32, "Step": 1 },
+				{ "Type": "Array", "Label": "polymorph:setting-Deny", "Description": "polymorph:settingdesc-Deny", "Map": "Deny", "ElementType": "String" }
+			]
+		}
+	]
+}

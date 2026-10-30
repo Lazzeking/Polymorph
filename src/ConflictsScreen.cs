@@ -364,7 +364,7 @@ public partial class PolymorphMod
         }
 
         _conflictsDialog ??= new PolymorphConflictsDialog(_clientApi, edit => _clientChannel?.SendPacket(edit), request => _clientChannel?.SendPacket(request),
-            HasConfigKit(_clientApi) ? null : OpenSettings);
+            HasSettingsScreen(_clientApi) ? null : OpenSettings);
         _conflictsDialog.Show(packet);
     }
 }

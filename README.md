@@ -65,7 +65,7 @@ Barrel recipes go in the same denylist, written as `barrel:<recipe code>`, for e
 - `BarrelAutomationWaitSeconds`: after asking a player, how long automation waits before going with the remembered choice, 30 by default
 - `BarrelChooseRange`: how many blocks away a player can choose for a barrel, 8 by default
 
-With [ConfigKit](https://mods.vintagestory.at/configkit) installed the same settings and the denylist show up on its in-game screen, and a change applies for everyone at once. Players see the server's values, only admins can change them. No ConfigKit ? No problem, the conflicts screen then has a Settings button that opens a small screen with the same settings (all but the denylist, the conflicts screen already does that one), Save there writes `polymorph.json` and applies them for everyone.
+With [ConfigKit](https://mods.vintagestory.at/configkit) installed the same settings and the denylist show up on its in-game screen, and a change applies for everyone at once. Players see the server's values, only admins can change them. [Integrated Mod Manager](https://mods.vintagestory.at/integratedmodmanager) works too, Polymorph shows up there with the same settings and the denylist, and saving applies them for everyone right away (no restart). No ConfigKit or Integrated Mod Manager ? No problem, the conflicts screen then has a Settings button that opens a small screen with the same settings (all but the denylist, the conflicts screen already does that one), Save there writes `polymorph.json` and applies them for everyone.
 
 ## Conflicts screen
 

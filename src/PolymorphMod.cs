@@ -6,6 +6,7 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text;
 using HarmonyLib;
+using Newtonsoft.Json.Linq;
 using ProtoBuf;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
@@ -189,6 +190,7 @@ public partial class PolymorphMod : ModSystem, IPolymorphChoices
             .SetMessageHandler<SettingsEditPacket>(OnSettingsEdit);
         api.Event.PlayerNowPlaying += SendGrindingOverloads;
         api.Event.PlayerNowPlaying += SendDenyList;
+        api.Event.RegisterEventBusListener(OnImmSaved, 0.5, ImmSavedEvent);
         api.ChatCommands
             .Create("polymorph")
             .WithDescription("Writes crafting conflicts and reloads the denylist.")
@@ -708,6 +710,10 @@ public partial class PolymorphMod : ModSystem, IPolymorphChoices
         try
         {
             config = api.LoadModConfig<PolymorphConfig>(ConfigFile);
+            if (config != null)
+            {
+                AddMissingSettings(api, config);
+            }
         }
         catch (Exception exception)
         {
@@ -724,6 +730,21 @@ public partial class PolymorphMod : ModSystem, IPolymorphChoices
         Settings.CopySettingsFrom(config);
         Settings.Deny = config.Deny ?? Array.Empty<string>();
         return ApplyDenyList(api);
+    }
+
+    // A polymorph.json from before 3.0.0 has only the denylist. The settings it lacks are written in with their defaults,
+    // so the file shows them and Integrated Mod Manager, which edits the file in place, finds each one. A complete file
+    // is left as it is.
+    private static void AddMissingSettings(ICoreServerAPI api, PolymorphConfig config)
+    {
+        // Read as plain JSON rather than through LoadModConfig, which ConfigKit watches for configs to give a screen.
+        string path = Path.Combine(api.GetOrCreateDataPath("ModConfig"), ConfigFile);
+        JObject? file = File.Exists(path) ? JObject.Parse(File.ReadAllText(path)) : null;
+        if (file != null && typeof(PolymorphConfig).GetFields(BindingFlags.Public | BindingFlags.Instance).Any(field => !file.ContainsKey(field.Name)))
+        {
+            api.StoreModConfig(config, ConfigFile);
+            api.Logger.Notification("Polymorph added the settings missing from {0} with their defaults.", ConfigFile);
+        }
     }
 
     // Checks the denylist in Settings and uses the lines that match something.

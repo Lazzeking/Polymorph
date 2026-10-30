@@ -43,6 +43,7 @@
 	"conflicts-find": "Find",
 	"conflicts-settings": "Settings",
 	"settings-title": "Polymorph settings",
+	"imm-desc": "Pick at which stations players get to choose and tweak the timings, saving applies it for everyone right away. The denylist is easier from the conflicts screen though (/polymorph screen or Ctrl+P)",
 	"settings-save": "Save",
 	"settings-hint": "Hover a setting to see what it does",
 	"settings-saved": "Polymorph settings saved and applied for everyone, carry on",
